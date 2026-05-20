@@ -1,0 +1,10 @@
+defaults:
+  - garment_particles_v2.2
+  - _self_
+
+_target_: datasets.garment_particle_v2_dataset_w_text.GarmentParticleDatasetV2WithText
+text_path: /scratch/m000051/george/gcdv2/short_captions_v2.json
+tokenizer_name: openai/clip-vit-large-patch14
+max_length: 77
+text_drop_prob: 0.1
+use_all_captions: False

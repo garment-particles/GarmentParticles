@@ -1,0 +1,12 @@
+defaults:
+  - sparse_lightningdit_v3_l1
+  - _self_
+
+_target_: models.lightningdit_edge_model.LightningCrossAttnDiTV3EdgeModel
+in_channels_context: 6
+in_channels: 7
+n_panels: 37
+n_curves: 38
+use_panel_embedding: False
+use_rope: True
+point_encoder_type: "linear"

@@ -1,0 +1,60 @@
+# we recommend to read config_details.yaml first.
+
+defaults:
+  - dataset: garment_particles
+  - model: sparse_lightningdit_xl1
+  - transport: default_transport
+  - sample: default_sampler
+  - _self_
+
+ckpt_path: null # <---- download our pre-trained lightningdit or your own checkpoint
+
+data:
+  val_split: "assets/garment_particle_test_filtered_992025.txt"
+  train_split: "assets/garment_particle_train_filtered_992025.txt"                                              #       if you just want to inference, download our latent_status.safetensors and give its folder path here is ok.
+  workers_per_gpu: 8
+
+
+
+
+# recommend to use default settings
+train:
+  max_steps: 160000
+  global_batch_size: 64
+  global_seed: 0
+  deterministic: false
+  diff_seed: true
+  exp_name: 'sparselightningdit_xl_garment_particles' # <---- experiment name, set as you like
+  wandb_dir:  ./wandb
+  wandb_cache_dir:  ./wandb/cache
+  wandb_project: 'interact-garment'
+  ckpt: null
+  log_every: 10
+  ckpt_every: 1000
+  sample_every: 5000
+  eval_every: 5000
+  gradient_accumulation_steps: 1
+  resume: null
+  weight_init: null
+  max_checkpoints: 10000
+  log_level: "INFO"
+eval:
+  sample_per_batch: 1
+  n_samples: 4
+  use_ema: true
+  using_cfg: false
+  evaluate: False
+  mode: "val"
+optimizer:
+  lr: 0.0001
+  beta2: 0.99
+  max_grad_norm: 1.0
+  warmup_ratio: 0.01
+  warmup_steps: 100
+  weight_decay: 0
+  param_groups: null
+
+
+hydra:
+  run:
+    dir: ./outputs/${train.exp_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

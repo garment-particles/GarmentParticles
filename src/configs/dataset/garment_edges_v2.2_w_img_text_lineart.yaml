@@ -1,0 +1,16 @@
+defaults:
+  - garment_edges_v2.2
+  - _self_
+
+_target_: datasets.garment_edge_dataset_w_lineart_img_text.GarmentEdgeDatasetWithLineArt
+
+image_root: /scratch/m000051/george/gcdv2/gcdv2_lineart/eval_results/imgs_epoch_019/
+text_tokenizer_name: openai/clip-vit-large-patch14
+image_processor_name: facebook/dinov2-large
+text_max_length: 77
+use_all_captions: False
+img_drop_prob: 0.1
+text_drop_prob: 0.1
+front_only: False
+front_back: False
+text_path: /scratch/m000051/george/gcdv2/short_captions_v2.json

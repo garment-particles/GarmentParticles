@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.ipynb_checkpoints/
+
+# Build artifacts
+build/
+dist/
+*.so
+
+# Runtime outputs & downloaded assets (not version-controlled)
+outputs/
+output/
+tensorboard_logs/
+wandb/
+checkpoints/
+*.pt
+
+# Environments / editors / OS
+.venv/
+venv/
+env/
+.env
+.vscode/
+.idea/
+.DS_Store

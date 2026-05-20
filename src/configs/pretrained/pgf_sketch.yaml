@@ -1,0 +1,147 @@
+dataset:
+  normalization:
+    pcd_mean:
+    - 1.02373453
+    - 0.53175375
+    - 0.0537376513
+    - 86.1824935
+    - -1.33205849
+    - 0.0
+    pcd_std:
+    - 0.51201646
+    - 0.13567009
+    - 17.43921292
+    - 36.19954752
+    - 9.72246543
+    - 1.0
+    xlims:
+    - -150
+    - 150
+    ylims:
+    - -80
+    - 220
+  _target_: datasets.garment_particle_v2_dataset_w_img_text_lineart.GarmentParticleDatasetV2WithImageTextLineArt
+  data_dir: /scratch/m000051/george/gcdv2/garment_particles_v2.1_11182025
+  multiplier: 1.0
+  n_samples: null
+  n_points: 8192
+  fixed_n_points: false
+  pad_everything: false
+  text_path: /scratch/m000051/george/gcdv2/short_captions_v2.json
+  image_dir: /scratch/m000051/george/gcdv2/gcdv2_lineart/eval_results/imgs_epoch_019
+  img_drop_prob: 0.1
+  text_drop_prob: 0.8
+  text_tokenizer_name: openai/clip-vit-large-patch14
+  image_processor_name: facebook/dinov2-large
+  text_max_length: 77
+  use_all_captions: false
+  collate_fn:
+    _target_: datasets.dynamic_sampler.ConstantTokenCollator
+model:
+  _target_: models.sparse_lightningdit_v3_cross_attn_varlen_img_text_v2.SparseLightningDiTV3CrossAttnVarlenImgTextV2
+  depth: 28
+  hidden_size: 1152
+  num_heads: 16
+  use_qknorm: true
+  use_swiglu: true
+  use_rope: false
+  use_face_emebds: false
+  use_rmsnorm: true
+  wo_shift: false
+  in_channels: 6
+  use_checkpoint: false
+  backend: flash-attn
+  num_face_classes: 34
+  image_encoder_name: facebook/dinov2-large
+  text_encoder_name: openai/clip-vit-large-patch14
+  freeze_everything: false
+transport:
+  _target_: transport.transport.Transport
+  path_type: Linear
+  model_type: velocity
+  loss_type: null
+  sample_eps: null
+  train_eps: null
+  use_cosine_loss: false
+  use_lognorm: true
+  denormalize_loss: false
+  use_closure_loss: false
+  use_valid_loss: false
+sample:
+  mode: ODE
+  sampling_method: euler
+  atol: 1.0e-06
+  rtol: 0.001
+  reverse: false
+  likelihood: false
+  num_sampling_steps: 250
+  cfg_scale: 0
+  per_proc_batch_size: 5
+  fid_num: 5
+  cfg_interval_start: 0.11
+  timestep_shift: 0.3
+  curve_sampling: false
+  stitch_sampling: false
+ckpt_path: null
+data:
+  val_split: assets/garment_particle_v2_test_11182025.txt
+  train_split: assets/garment_particle_v2_train_11182025.txt
+  workers_per_gpu: 8
+  sampler:
+    _target_: datasets.dynamic_sampler.ConstantTokenBatchSampler
+    target_tokens_per_batch: 16382
+    shuffle: true
+    token_counts_cache: assets/token_counts_v2.2.pkl
+    max_batch_size: 128
+    min_batch_size: 1
+    bucket_size_bins: 10
+    drop_last: true
+    verbose: true
+train:
+  max_steps: 150000
+  global_batch_size: 64
+  global_seed: 0
+  deterministic: false
+  diff_seed: true
+  exp_name: xl_v2.2_image_text_all_finetuned_lineart
+  wandb_dir: /scratch/m000051/george/InteractGarment
+  wandb_cache_dir: /scratch/m000051/george/InteractGarment/cache
+  wandb_project: interact-garment
+  ckpt: null
+  log_every: 10
+  ckpt_every: 1000
+  sample_every: 5000
+  eval_every: 1000000000
+  gradient_accumulation_steps: 1
+  resume: null
+  weight_init: outputs/xl_w_text_large_qknorm/checkpoints/0210000
+  max_checkpoints: 5
+  mp_start_method: fork
+  cudnn_benchmark: false
+  log_level: INFO
+eval:
+  sample_per_batch: 1
+  n_samples: 4
+  use_ema: true
+  using_cfg: false
+  evaluate: false
+  mode: val
+optimizer:
+  lr: 1.0e-05
+  beta2: 0.99
+  max_grad_norm: 1.0
+  warmup_ratio: 0.01
+  warmup_steps: 100
+  weight_decay: 0
+  param_groups:
+    tags:
+    - additional
+    lrs:
+    - 0.0001
+dist_params:
+  backend: nccl
+  timeout: 3600
+fsdp:
+  param_dtype: bfloat16
+  reduce_dtype: float32
+  reshard_after_forward: true

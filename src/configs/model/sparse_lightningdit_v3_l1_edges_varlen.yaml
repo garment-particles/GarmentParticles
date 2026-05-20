@@ -1,0 +1,5 @@
+defaults:
+  - sparse_lightningdit_v3_l1_edges
+  - _self_
+
+_target_: models.lightningdit_edge_model_varlen.LightningCrossAttnDiTV3EdgeModelVarlen

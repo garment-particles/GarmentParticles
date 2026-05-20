@@ -1,0 +1,16 @@
+defaults:
+  - garment_particles_v2.2
+  - _self_
+
+text_path: /scratch/m000051/george/gcdv2/short_captions_v2.json
+image_dir: /scratch/m000051/george/gcdv2/gcdv2_lineart/eval_results/imgs_epoch_019
+_target_: datasets.garment_particle_v2_dataset_w_img_text_lineart.GarmentParticleDatasetV2WithImageTextLineArt
+img_drop_prob: 0.1
+text_drop_prob: 0.1
+text_tokenizer_name: openai/clip-vit-large-patch14
+image_processor_name: facebook/dinov2-large
+text_max_length: 77
+use_all_captions: False
+pad_everything: True
+front_only: False 
+front_back: False

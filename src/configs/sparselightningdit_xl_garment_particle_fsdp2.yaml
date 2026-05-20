@@ -1,0 +1,35 @@
+# we recommend to read config_details.yaml first.
+
+defaults:
+  - sparselightningdit_xl_garment_particle
+  - _self_
+
+dist_params:
+  backend: "nccl"
+  timeout: 3600
+
+# recommend to use default settings
+train:
+  mp_start_method: "fork"
+  cudnn_benchmark: false
+
+fsdp:
+  param_dtype: "bfloat16"
+  reduce_dtype: "float32"
+  reshard_after_forward: True
+
+dataset:
+  collate_fn:
+    _target_: datasets.dynamic_sampler.ConstantTokenCollator
+
+data:
+  sampler:
+    _target_: datasets.dynamic_sampler.ConstantTokenBatchSampler
+    target_tokens_per_batch: 8192
+    shuffle: True
+    token_counts_cache: assets/token_counts.pkl
+    max_batch_size: 128
+    min_batch_size: 1
+    bucket_size_bins: 10
+    drop_last: True
+    verbose: True

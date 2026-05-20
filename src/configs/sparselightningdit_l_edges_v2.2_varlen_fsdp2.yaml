@@ -1,0 +1,24 @@
+# we recommend to read config_details.yaml first.
+
+defaults:
+  - sparselightningdit_xl_garment_particle_fsdp2
+  - override dataset: garment_edges_v2.2
+  - override model: sparse_lightningdit_v3_l1_edges_varlen
+  - _self_
+
+dataset:
+  collate_fn: null
+data:
+  val_split: "assets/garment_particle_v2_test_11182025.txt"
+  train_split: "assets/garment_particle_v2_train_11182025.txt"
+  workers_per_gpu: 8
+  sampler: null
+
+eval:
+  custom_data_dir: null
+
+# recommend to use default settings
+train:
+  max_steps: 320000
+  exp_name: 'garment_edges_v2.2_l1_varlen'
+

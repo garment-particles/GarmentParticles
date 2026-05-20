@@ -1,0 +1,11 @@
+defaults:
+  - normalization: garment_particles_v2.2
+  - _self_
+
+_target_: datasets.garment_particle_v2_dataset.GarmentParticleDatasetV2
+data_dir: /scratch/m000051/george/gcdv2/garment_particles_v2.1_11182025
+multiplier: 1.0
+n_samples: null
+n_points: 8192
+fixed_n_points: False
+pad_everything: True

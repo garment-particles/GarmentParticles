@@ -1,0 +1,6 @@
+_target_: datasets.garment_particle_dataset.GarmentParticleDataset
+data_dir: /orion/u/w4756677/garment/gcdv2/garment_particles
+normalize: True
+multiplier: 1.0
+n_samples: null
+fixed_n_points: True

@@ -1,0 +1,26 @@
+defaults:
+  - normalization: garment_edges_relative_v2.2
+  - _self_
+
+_target_: datasets.garment_edge_dataset.GarmentEdgeDataset
+garment_particle_dir: /scratch/m000051/george/gcdv2/garment_particles_v2.1_11182025
+garment_edge_dir: /scratch/m000051/george/gcdv2/panel_edge_vecs
+gcd_dir: /scratch/m000051/george/gcdv2/garmentcodedatav2
+gcd_list_file: assets/gcd_list.txt
+n_samples: null
+n_points: 8196
+n_curves: 38
+n_panels: 37
+uv_only: False
+xyz_only: False
+remove_bflag: False
+jitter_pcd_scale: 0
+jitter_uv_scale: 0
+absolute_coords: False
+random_dropout_scale: 0
+order_panels_by: 3d
+transformation_postfix: 11182025
+predict_rigid_transformations: True
+predict_attachment_type: True
+predict_stitch_tags: True
+predict_valid_mask: True

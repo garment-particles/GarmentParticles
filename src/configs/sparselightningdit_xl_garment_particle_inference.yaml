@@ -1,0 +1,32 @@
+# we recommend to read config_details.yaml first.
+
+defaults:
+  - sparselightningdit_xl_garment_particle
+  - model@edge_model: sparse_lightningdit_v3_l1_edges_varlen
+  - override dataset: garment_edges_v2.2_w_img_text
+  - override model: sparse_lightningdit_v3_xl1_w_img_text
+  - _self_
+
+dataset:
+  collate_fn: null
+  predict_rigid_transformations: True 
+  predict_attachment_type: True 
+  predict_stitch_tags: True 
+  predict_valid_mask: True 
+
+edge_model: 
+  in_channels: 15
+
+data:
+  val_split: "assets/garment_particle_v2_test_11182025.txt"
+  train_split: "assets/garment_particle_v2_train_11182025.txt"     
+  sampler: null                               #       if you just want to inference, download our latent_status.safetensors and give its folder path here is ok.
+
+# recommend to use default settings
+train:
+  exp_name: 'xl1_v2.2_w_img_text_eval' # <---- experiment name, set as you like
+
+profiling: False
+gpf_ckpt: ???
+edge_model_ckpt: ???
+pgf_weight_init: ???

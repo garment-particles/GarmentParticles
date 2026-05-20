@@ -1,0 +1,15 @@
+_target_: models.sparse_lightningdit.SparseLightningDiT
+depth: 28
+hidden_size: 1152
+num_heads: 16
+use_qknorm: false
+use_swiglu: true
+use_rope: false
+use_rmsnorm: true
+wo_shift: false
+in_channels: 6
+uv_scale: 6.28318530718 # 2 * pi
+use_pos_embed: false
+use_checkpoint: false
+num_classes: 1
+backend: flash-attn
