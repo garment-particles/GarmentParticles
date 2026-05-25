@@ -33,8 +33,8 @@ pip install flash-attn --no-build-isolation    # optional; may need to build fro
 export PYTHONPATH=$PWD/src:$PYTHONPATH
 ```
 
-The interactive GUI / inference server additionally needs the Earth Mover's
-Distance CUDA extension, built against your torch/CUDA:
+The Earth Mover's Distance CUDA extension must be built against your
+torch/CUDA:
 
 ```bash
 cd external/PyTorchEMD
@@ -53,12 +53,7 @@ src/
 ├── models/                       PGF + edge model architectures
 ├── datasets/                     particle & edge datasets
 ├── configs/                      Hydra configs
-├── transport/  patterns/  utils/
-└── tools/run_server.py           Flask inference server for the GUI
-external/
-├── paint/                        PyQt interactive editor (HTTP client)
-├── PyTorchEMD/                   EMD CUDA extension
-└── GarmentCode*/  NvidiaWarp-GarmentCode/   data-generation pipeline
+└── transport/  patterns/  utils/
 ```
 
 ---
@@ -253,31 +248,3 @@ torchrun --nproc_per_node=8 train_fsdp2.py \
 # non-varlen baseline: same overrides, swap the config name to
 #   --config-name sparselightningdit_l_edges_v2.2_fsdp2
 ```
-
----
-
-## Interactive GUI
-
-The `external/paint/` PyQt editor performs inverse design (draw a guide → get a
-garment) by talking to a Flask inference server over HTTP.
-
-**Server** (on a GPU machine):
-
-```bash
-cd src
-python tools/run_server.py --host 0.0.0.0 --port 12345
-```
-
-**Client** (the GUI, on any machine with a display):
-
-```bash
-conda install -c conda-forge pyqt vtk pillow numpy
-pip install requests
-
-export INTERACT_GARMENT_HOST=<server-host>   # default 127.0.0.1
-export INTERACT_GARMENT_PORT=12345
-cd external/paint
-python main.py
-```
-
-`File → Inference` posts the drawn guide to the server and renders the result.
