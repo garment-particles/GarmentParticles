@@ -186,19 +186,7 @@ class Transport:
         loss_type,
         train_eps,
         sample_eps,
-        use_cosine_loss=False,
-        use_curve_loss=False,
-        curve_loss_weight=1.0,
-        stitch_loss_weight=1.0,
-        use_stitch_loss=False,
         use_lognorm=False,
-        partitial_train=None,
-        partial_ratio=1.0,
-        shift_lg=False,
-        normalization=None,
-        denormalize_loss=False,
-        use_closure_loss=False,
-        use_valid_loss=False,
     ):
         
         if model_type == "noise":
@@ -247,19 +235,7 @@ class Transport:
         self.path_sampler = path_options[path_type]()
         self.train_eps = train_eps
         self.sample_eps = sample_eps
-        self.use_cosine_loss = use_cosine_loss
-        self.use_curve_loss = use_curve_loss
-        self.curve_loss_weight = curve_loss_weight
-        self.stitch_loss_weight = stitch_loss_weight
-        self.use_stitch_loss = use_stitch_loss
         self.use_lognorm = use_lognorm
-        self.partitial_train = partitial_train
-        self.partial_ratio = partial_ratio
-        self.shift_lg = shift_lg
-        self.normalization = normalization
-        self.denormalize_loss = denormalize_loss
-        self.use_closure_loss = use_closure_loss
-        self.use_valid_loss = use_valid_loss
     def prior_logp(self, z):
         '''
             Standard multivariate normal prior
@@ -339,20 +315,9 @@ class Transport:
         x0 = th.randn_like(x1)
         t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
         if not self.use_lognorm:
-            if self.partitial_train is not None and th.rand(1) < self.partial_ratio:
-                t = th.rand((batch_size,)) * (self.partitial_train[1] - self.partitial_train[0]) + self.partitial_train[0]
-            else:
-                t = th.rand((batch_size,)) * (t1 - t0) + t0
+            t = th.rand((batch_size,)) * (t1 - t0) + t0
         else:
-            # random < partial_ratio, then sample from the partial range
-            if not self.shift_lg:
-                if self.partitial_train is not None and th.rand(1) < self.partial_ratio:
-                    t = self.sample_in_range(0, 1, batch_size, range_min=self.partitial_train[0], range_max=self.partitial_train[1])
-                else:
-                    t = self.sample_logit_normal(0, 1, size=batch_size) * (t1 - t0) + t0
-            else:
-                assert self.partitial_train is None, "Shifted lognormal distribution is not compatible with partial training"
-                t = self.sample_logit_normal(shifted_mu, 1, size=batch_size) * (t1 - t0) + t0
+            t = self.sample_logit_normal(shifted_mu, 1, size=batch_size) * (t1 - t0) + t0
         
         # overwrite t if sp_timesteps is provided (for validation)
         if sp_timesteps is not None:
@@ -419,56 +384,10 @@ class Transport:
             else:
                 loss = mean_flat(((model_output - ut) ** 2), mask=mask)
             terms['mse_loss'] = loss
-            if self.use_cosine_loss:
-                if mask is not None:
-                    model_output = model_output * mask.float()
-                    ut[mask] = 0
-                terms['cos_loss'] = mean_flat((1 - th.nn.functional.cosine_similarity(model_output, ut, dim=1)))
         elif self.model_type == ModelType.FFD:
             loss = ((model_output - ut) ** 2)
             loss = mean_flat(((model_output - ut) ** 2), mask=mask)
             terms['mse_loss'] = loss
-            # edge_mean = th.tensor(self.normalization.edge_mean).to(model_output.device)
-            # edge_std = th.tensor(self.normalization.edge_std).to(model_output.device)
-            # transf_std = th.tensor(self.normalization.transformation_std).to(model_output.device)
-            # n_panels, n_curves = model_output.shape[1:3]
-            # square_error = (model_output.reshape(B, n_panels * n_curves, -1) - ut) ** 2
-            # if self.denormalize_loss:
-            #     square_error = square_error * (th.tensor(self.normalization.edge_std).to(square_error.device) ** 2)
-            # terms['mse_loss'] = mean_flat(square_error, mask=mask)
-            # panel_points = model_output[..., 1:, :]
-            # zero_vector = - edge_mean / edge_std
-            # if self.use_closure_loss:
-            #     diff = panel_points[..., :2] - zero_vector[:2]
-            #     diff = diff.sum(dim=-2)
-            #     terms['closure_loss'] = mean_flat(diff ** 2)
-            # ut = ut.reshape(B, n_panels,  n_curves, -1)
-            # gt_transformation = ut[..., 0, :]
-            # gt_panel_points = ut[..., 1:, :]
-            # gt_mask = model_kwargs.get('gt_mask', None)
-            # if gt_mask is None:
-            #     gt_verts_mask = th.all(th.isclose(gt_panel_points, zero_vector, atol=0.01), dim=-1, keepdim=True)
-            #     gt_verts_mask = th.logical_not(gt_verts_mask)
-            #     gt_transf_mask = th.all(th.isclose(gt_transformation, th.zeros_like(gt_transformation), atol=0.01), dim=-1, keepdim=True)
-            #     gt_transf_mask = th.logical_not(gt_transf_mask)
-            # else:
-            #     gt_verts_mask = gt_mask
-            #     gt_transf_mask = gt_mask.any(dim=-1)
-            # verts_square_error = square_error.reshape(B, n_panels, n_curves, -1)[..., 1:, :]
-            # transf_square_error = square_error.reshape(B, n_panels, n_curves, -1)[..., 0, :2]
-            # verts_l2 = (th.sqrt(verts_square_error[..., :2]) * edge_std[:2]).sum(dim=-1)
-            # transf_l2 = (th.sqrt(transf_square_error) * transf_std).sum(dim=-1)
-            # valid_verts_square_error = verts_square_error[gt_verts_mask]
-            # valid_transformation_square_error = transf_square_error[gt_transf_mask]
-            # valid_verts_l2 = th.sqrt((valid_verts_square_error[..., :2] * edge_std[:2] * edge_std[:2]).sum(dim=-1))
-            # valid_transformation_l2 = th.sqrt((valid_transformation_square_error * transf_std * transf_std).sum(dim=-1))
-            # terms["verts_l2"] = verts_l2.mean()
-            # terms["valid_verts_l2"] = valid_verts_l2.mean()
-            # terms["transformation_l2"] = transf_l2.mean()
-            # terms["valid_transformation_l2"] = valid_transformation_l2.mean()
-            # if self.use_valid_loss:
-            #     terms["valid_verts_l2_loss"] = valid_verts_square_error
-            #     terms["valid_transformation_l2_loss"] = valid_transformation_square_error
         else: 
             _, drift_var = self.path_sampler.compute_drift(xt, t)
             sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
@@ -729,8 +648,6 @@ class Sampler:
         rtol=1e-3,
         reverse=False,
         timestep_shift=0.0,
-        curve_sampling=False,
-        stitch_sampling=False,
     ):
         """returns a sampling function with given ODE settings
         Args:
@@ -769,8 +686,6 @@ class Sampler:
             atol=atol,
             rtol=rtol,
             timestep_shift=timestep_shift,
-            curve_sampling=curve_sampling,
-            stitch_sampling=stitch_sampling,
         )
         
         return _ode.sample
@@ -898,8 +813,6 @@ class Sampler:
         rtol=1e-3,
         reverse=False,
         timestep_shift=0.0,
-        curve_sampling=False,
-        stitch_sampling=False,
         exclude_last_step_from_window: bool = True,
     ):
         # Use same ODE grid
@@ -926,8 +839,6 @@ class Sampler:
             atol=atol,
             rtol=rtol,
             timestep_shift=timestep_shift,
-            curve_sampling=curve_sampling,
-            stitch_sampling=stitch_sampling,
         )
 
         def _sigma_like_x(t_b_fp32: th.Tensor, x_fp32: th.Tensor) -> th.Tensor:
@@ -1131,8 +1042,6 @@ def rollout_group_ddpo(
         rtol=1e-3,
         reverse=False,
         timestep_shift=float(getattr(cfg.sample, "timestep_shift", 0.0)),
-        curve_sampling=bool(getattr(cfg.sample, "curve_sampling", False)),
-        stitch_sampling=bool(getattr(cfg.sample, "stitch_sampling", False)),
         exclude_last_step_from_window=True,
     )
     sample_fn_ode = sampler.sample_ode(
@@ -1142,8 +1051,6 @@ def rollout_group_ddpo(
         rtol=1e-3,
         reverse=False,
         timestep_shift=float(getattr(cfg.sample, "timestep_shift", 0.0)),
-        curve_sampling=bool(getattr(cfg.sample, "curve_sampling", False)),
-        stitch_sampling=bool(getattr(cfg.sample, "stitch_sampling", False)),
     )
 
     # th.manual_seed(43)

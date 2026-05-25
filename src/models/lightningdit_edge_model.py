@@ -24,8 +24,6 @@ class LightningCrossAttnDiTV3EdgeModel(nn.Module):
         in_channels_context=32,
         n_panels=34,
         n_curves=25,
-        use_panel_embedding=True,
-        point_encoder_type="linear",
         hidden_size=1152,
         depth=28,
         num_heads=16,
@@ -40,12 +38,7 @@ class LightningCrossAttnDiTV3EdgeModel(nn.Module):
         **kwargs
     ):
         super().__init__()
-        self.use_panel_embedding = use_panel_embedding
-        self.point_encoder_type = point_encoder_type
-        if point_encoder_type == "linear":
-            self.point_encoder = nn.Linear(in_channels_context, hidden_size, bias=True)
-        else:
-            raise ValueError(f"Unsupported point encoder type: {point_encoder_type}")
+        self.point_encoder = nn.Linear(in_channels_context, hidden_size, bias=True)
         self.panel_embedding = nn.Embedding(n_panels, hidden_size)
         self.curve_embedding = nn.Embedding(n_curves, hidden_size)
         
@@ -143,9 +136,6 @@ class LightningCrossAttnDiTV3EdgeModel(nn.Module):
         use_checkpoint = self.use_checkpoint
         x = self.x_embedder_proj(x)  # (N, n_face, n_pts, D)
         ctx = self.point_encoder(panel_points)
-        if self.use_panel_embedding:
-            panel_embedding = self.panel_embedding(panel_indices)
-            ctx = ctx + panel_embedding
         x = x + self.panel_embedding.weight[:, None, :] # (n_panels, 1, D)
         curve_embedding = self.curve_embedding.weight[None, :, :] # (1, n_curves, D)
         x = x + curve_embedding

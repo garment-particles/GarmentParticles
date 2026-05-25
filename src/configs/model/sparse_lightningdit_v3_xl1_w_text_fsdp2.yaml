@@ -1,7 +1,5 @@
 defaults:
-  - sparse_lightningdit_v3_xl1_w_text
+  - gpf_text
   - _self_
 
 _target_: models.sparse_lightningdit_v3_cross_attn_varlen.SparseLightningDiTV3CrossAttnVarlen
-
-block_type: "v1"

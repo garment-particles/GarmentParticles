@@ -336,116 +336,6 @@ class LightningDiTCrossAttnVarlenBlock(nn.Module):
         
         return x, context
     
-class LightningDiTCrossAttnVarlenBlockV2(nn.Module):
-    """
-    Lightning DiT Block. We add features including: 
-    - ROPE
-    - QKNorm 
-    - RMSNorm
-    - SwiGLU
-    - No shift AdaLN.
-    Not all of them are used in the final model, please refer to the paper for more details.
-    """
-    def __init__(
-        self,
-        hidden_size,
-        num_heads,
-        mlp_ratio=4.0,
-        use_qknorm=False,
-        use_swiglu=False, 
-        use_rmsnorm=False,
-        wo_shift=False,
-        no_conditioning=False,
-        **block_kwargs
-    ):
-        super().__init__()
-        
-        # Initialize normalization layers
-        if not use_rmsnorm:
-            self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-            self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-            self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-            self.additional_norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        else:
-            self.norm1 = RMSNorm(hidden_size)
-            self.norm2 = RMSNorm(hidden_size)
-            self.norm3 = RMSNorm(hidden_size)
-            self.additional_norm = RMSNorm(hidden_size)
-        # Initialize attention layer
-        self.attn = AttentionVarlen(
-            hidden_size,
-            num_heads=num_heads,
-            qkv_bias=True,
-            qk_norm=use_qknorm,
-            use_rmsnorm=use_rmsnorm,
-            **block_kwargs
-        )
-        
-        self.cross_attn = CrossAttentionVarlen(
-            hidden_size,
-            num_heads=num_heads,
-            qkv_bias=True,
-            qk_norm=use_qknorm,
-            use_rmsnorm=use_rmsnorm,
-            **block_kwargs
-        )
-        
-        self.additional_cross_attn = CrossAttentionVarlen(
-            hidden_size,
-            num_heads=num_heads,
-            qkv_bias=True,
-            qk_norm=use_qknorm,
-            use_rmsnorm=use_rmsnorm,
-            **block_kwargs
-        )
-        
-        # Initialize MLP layer
-        mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        if use_swiglu:
-            # here we did not use SwiGLU from xformers because it is not compatible with torch.compile for now.
-            self.mlp = SwiGLUFFN(hidden_size, int(2/3 * mlp_hidden_dim))
-        else:
-            self.mlp = Mlp(
-                in_features=hidden_size,
-                hidden_features=mlp_hidden_dim,
-                act_layer=approx_gelu,
-                drop=0
-            )
-            
-        # Initialize AdaLN modulation
-        if wo_shift:
-            self.adaLN_modulation = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(hidden_size, 4 * hidden_size, bias=True)
-            )
-        else:
-            self.adaLN_modulation = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(hidden_size, 6 * hidden_size, bias=True)
-            )
-        self.wo_shift = wo_shift
-        
-    @torch.compile
-    def forward(self, x, c, context, additional_context, cu_input_lens=None, max_input_len=None, cu_text_lens=None, max_text_len=None, cu_additional_lens=None, max_additional_len=None):
-        if self.wo_shift:
-            scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(4, dim=1)
-            shift_msa, shift_mlp = None, None
-        else:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        # 3. Apply Attention (Standard Varlen Logic)
-        attn_out = self.attn(modulate(self.norm1(x), shift_msa, scale_msa), cu_lens=cu_input_lens, max_len=max_input_len)
-        
-        # 4. Residuals
-        x = x + gate_msa * attn_out
-        cross_attn_out = self.cross_attn(self.norm2(x), context, cu_ctx_lens=cu_text_lens, max_ctx_len=max_text_len, cu_input_lens=cu_input_lens, max_input_len=max_input_len)
-        additional_cross_attn_out = self.additional_cross_attn(self.additional_norm(x), additional_context, cu_ctx_lens=cu_additional_lens, max_ctx_len=max_additional_len, cu_input_lens=cu_input_lens, max_input_len=max_input_len)
-        x = x + cross_attn_out + additional_cross_attn_out
-        
-        x = x + gate_mlp * self.mlp(modulate(self.norm3(x), shift_mlp, scale_mlp))
-        
-        return x
-    
 
 class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
     """
@@ -455,7 +345,6 @@ class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
         self,
         in_channels=32,
         text_encoder_name="openai/clip-vit-large-patch14",
-        block_type="v1",
         hidden_size=1152,
         depth=28,
         num_heads=16,
@@ -484,12 +373,7 @@ class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
         self.text_encoder.eval()
         freeze_model(self.text_encoder)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, hidden_size, bias=True)
-        block_cls = {
-            "v1": LightningDiTCrossAttnVarlenBlock,
-            "v2": LightningDiTCrossAttnVarlenBlockV2,
-        }[block_type]
-        self.block_type = block_type
-        self.blocks = nn.ModuleList([block_cls(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_qknorm=use_qknorm, use_swiglu=use_swiglu, use_rmsnorm=use_rmsnorm, wo_shift=wo_shift, backend=backend) for _ in range(depth)])
+        self.blocks = nn.ModuleList([LightningDiTCrossAttnVarlenBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_qknorm=use_qknorm, use_swiglu=use_swiglu, use_rmsnorm=use_rmsnorm, wo_shift=wo_shift, backend=backend) for _ in range(depth)])
         self.final_layer = FinalLayer(hidden_size, 1, self.out_channels, use_rmsnorm=use_rmsnorm)
         self.initialize_weights()
 
@@ -546,15 +430,6 @@ class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
         use_checkpoint: boolean to toggle checkpointing
         """
         
-        # print(f"cu_input_lens: {cu_input_lens}")
-        # print(f"max_input_len: {max_input_len}")
-        # print(f"x.shape[0]: {x.shape[0]}")
-
-        # # Verify the cumulative lengths are valid
-        # assert cu_input_lens[0] == 0, "cu_input_lens must start with 0"
-        # assert cu_input_lens[-1] == x.shape[0], f"cu_input_lens[-1] ({cu_input_lens[-1]}) must equal total tokens ({x.shape[0]})"
-        # assert torch.all(cu_input_lens[1:] > cu_input_lens[:-1]), "cu_input_lens must be strictly increasing"
-        
         use_checkpoint = self.use_checkpoint
         cu_input_lens = cu_input_lens.int()
         x = self.x_embedder_proj(x)  # (T, D)
@@ -584,30 +459,6 @@ class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
         x = self.forward(x, t, text_tokens, text_attn_mask, cu_lens, max_len)["pred"]
         x = pad_input(x, indices, B, N)
         return {"pred": x}
-    
-    def forward_with_cfg(self, x, t, cfg_scale, text_tokens=None, text_attn_mask=None, mask=None, cfg_interval=None, cfg_interval_start=None, **kwargs):
-        """
-        Forward pass of LightningDiT, but also batches the unconditional forward pass for classifier-free guidance.
-        """
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
-        half = x[: len(x) // 2]
-        combined = torch.cat([half, half], dim=0)
-        eps = self.forward_with_mask(combined, t, text_tokens=text_tokens, text_attn_mask=text_attn_mask, mask=mask)["pred"]
-        # For exact reproducibility reasons, we apply classifier-free guidance on only
-        # three channels by default. The standard approach to cfg applies it to all channels.
-        # This can be done by uncommenting the following line and commenting-out the line following that.
-        # eps, rest = model_out[:, :3], model_out[:, 3:]
-        cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
-        half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
-        
-        if cfg_interval is True:
-            timestep = t[0]
-            if timestep < cfg_interval_start:
-                half_eps = cond_eps
-
-        eps = torch.cat([half_eps, half_eps], dim=0)
-        return {"pred":eps}
-
     
     def apply_fsdp2(
         self, 
@@ -674,44 +525,3 @@ class SparseLightningDiTV3CrossAttnVarlen(nn.Module):
         )
         
         return self
-
-if __name__ == "__main__":
-    block = LightningDiTCrossAttnVarlenBlock(
-        hidden_size=1152, 
-        num_heads=16, 
-        mlp_ratio=4.0, 
-        use_qknorm=False, 
-        use_swiglu=True, 
-        use_rmsnorm=True, 
-        wo_shift=False).cuda()
-    x = torch.randn(1024, 1152).cuda().bfloat16()
-    c = torch.randn(1024, 1152).cuda().bfloat16()
-    context = torch.randn(1, 77, 1152).cuda().bfloat16()
-    feat_rope = None
-    mask = torch.ones(1, 1024).cuda().bool()
-    mask[0, 1000:] = False
-    ctx_mask = torch.ones(1, 77).cuda().bool()
-    ctx_mask[0, 50:] = False
-    # set detect anomaly
-    torch.autograd.set_detect_anomaly(True)
-    with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-        out = block(x, c, context, feat_rope, mask, ctx_mask)
-    # unpadded_random_input = torch.randn_like(unpadded_cross_attn_out)
-    padded_random_input = torch.randn_like(out)
-    # (unpadded_random_input * unpadded_cross_attn_out).sum().backward()
-    # x.grad = None
-    # c.grad = None
-    # context.grad = None
-    (padded_random_input * out).sum().backward()
-    print(unpadded_cross_attn_out.shape)
-    print(unpadded_random_input.shape)
-    print(unpadded_cross_attn_out.grad.shape)
-    print(unpadded_random_input.grad.shape)
-    print(unpadded_cross_attn_out.grad)
-    print(unpadded_random_input.grad)
-    print(out.shape)
-    print(padded_random_input.shape)
-    print(out.grad.shape)
-    print(padded_random_input.grad.shape)
-    print(out.grad)
-    print(padded_random_input.grad)

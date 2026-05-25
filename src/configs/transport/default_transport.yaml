@@ -4,8 +4,4 @@ model_type: velocity
 loss_type: null
 sample_eps: null
 train_eps: null
-use_cosine_loss: False
 use_lognorm: true
-denormalize_loss: false
-use_closure_loss: false
-use_valid_loss: false

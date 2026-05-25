@@ -100,18 +100,14 @@ model:
   use_qknorm: true
   use_swiglu: true
   use_rope: true
-  use_face_emebds: false
   use_rmsnorm: true
   wo_shift: false
   in_channels: 15
   use_checkpoint: false
   backend: flash-attn
-  num_face_classes: 34
   in_channels_context: 6
   n_panels: 37
   n_curves: 38
-  use_panel_embedding: false
-  point_encoder_type: linear
 transport:
   _target_: transport.transport.Transport
   path_type: Linear

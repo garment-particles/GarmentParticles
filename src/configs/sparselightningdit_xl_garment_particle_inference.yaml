@@ -1,10 +1,8 @@
-# we recommend to read config_details.yaml first.
-
 defaults:
   - sparselightningdit_xl_garment_particle
   - model@edge_model: sparse_lightningdit_v3_l1_edges_varlen
   - override dataset: garment_edges_v2.2_w_img_text
-  - override model: sparse_lightningdit_v3_xl1_w_img_text
+  - override model: sparse_lightningdit_v3_xl1_w_img_text_v2
   - _self_
 
 dataset:

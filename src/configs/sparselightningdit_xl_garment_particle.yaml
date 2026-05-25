@@ -1,8 +1,6 @@
-# we recommend to read config_details.yaml first.
-
 defaults:
   - dataset: garment_particles
-  - model: sparse_lightningdit_xl1
+  - model: sparse_lightningdit_v3_xl1_w_text
   - transport: default_transport
   - sample: default_sampler
   - _self_

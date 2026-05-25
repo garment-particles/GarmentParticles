@@ -264,8 +264,6 @@ def do_sampling(cfg: DictConfig):
         rtol=cfg.sample.rtol,
         reverse=cfg.sample.reverse,
         timestep_shift=cfg.sample.timestep_shift,
-        curve_sampling=cfg.sample.curve_sampling,
-        stitch_sampling=cfg.sample.stitch_sampling
     )
 
     # Prepare models for training:
@@ -421,31 +419,13 @@ def do_sampling(cfg: DictConfig):
         first_stage_data_dict = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in first_stage_data_dict.items()}
         n = z.shape[0]
 
-        if cfg.eval.using_cfg:
-            logger.info(f"Using CFG Sampling with CFG Scale {cfg.sample.cfg_scale:.3f}")
-            z = torch.cat([z, z], 0)
-            first_stage_data_dict["mask"] = torch.cat([first_stage_data_dict["mask"], first_stage_data_dict["mask"]], 0)
-            null_text = ""
-            null_text_encoding = dataset.text_tokenizer(null_text, max_length=cfg.dataset.text_max_length, padding="max_length", truncation=True, return_tensors="pt")
-            null_text_tokens = null_text_encoding["input_ids"].to(device)
-            null_text_attn_mask = null_text_encoding["attention_mask"].bool().to(device)
-            first_stage_data_dict["pixel_values"] = torch.cat([first_stage_data_dict["pixel_values"], torch.zeros_like(first_stage_data_dict["pixel_values"])], 0)
-            first_stage_data_dict["text_tokens"] = torch.cat([first_stage_data_dict["text_tokens"], null_text_tokens.expand(n, -1)], 0)
-            first_stage_data_dict["text_attn_mask"] = torch.cat([first_stage_data_dict["text_attn_mask"], null_text_attn_mask.expand(n, -1)], 0)
-            model_kwargs = dict(cfg_scale=cfg.sample.cfg_scale, cfg_interval=True, cfg_interval_start=cfg.sample.cfg_interval_start)
-            first_stage_data_dict.update(model_kwargs)
-            model_fn = model.forward_with_cfg
-        else:
-            model_fn = model.forward_with_mask
+        model_fn = model.forward_with_mask
         
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             samples = sample_fn(z, model_fn, **first_stage_data_dict)
 
         
         samples = samples[-1].float()
-        if cfg.eval.using_cfg: 
-            samples = samples[:n]
-
         data_dict["panel_points"] = samples
 
         data_dict = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in data_dict.items()}

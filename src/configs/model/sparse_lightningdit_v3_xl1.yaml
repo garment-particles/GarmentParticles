@@ -5,10 +5,8 @@ num_heads: 16
 use_qknorm: false
 use_swiglu: true
 use_rope: false
-use_face_emebds: false
 use_rmsnorm: true
 wo_shift: false
 in_channels: 6
 use_checkpoint: false
 backend: flash-attn
-num_face_classes: 34

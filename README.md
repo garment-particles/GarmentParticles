@@ -1,4 +1,12 @@
-# GarmentParticles
+# Garment Particles: A 2D–3D Symmetric Garment Representation for Generation and Editing
+
+Official codebase for the SIGGRAPH Conference Papers 2026 paper _Garment Particles: A 2D–3D Symmetric Garment Representation for Generation and Editing_.
+
+[Project page](https://garment-particles.github.io)
+
+![Teaser](assets/teaser.png)
+
+---
 
 Diffusion-based garment generation. A **two-stage pipeline** generates a garment
 as a 3D particle cloud (stage 1 — the *particle generative function*, PGF) and
