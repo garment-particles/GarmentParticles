@@ -1,8 +1,0 @@
-green, red, eraser を整理する。
-
-eraser で red を消す
-
-vertices -> strokes, bitmap (triangulation)　の実装
-
-bitmap -> points
-
