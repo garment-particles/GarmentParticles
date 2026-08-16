@@ -92,7 +92,7 @@ and Shapely. The related `utils.stage1_particles.write_stage1_particles`
 helper writes packed 2D coordinates plus simulated 3D coordinates to the HDF5
 schema consumed by the stage-one datasets.
 
-Note that the packing result might differ from the released dataset (). For reproduction, please use the packed result from the dataset. 
+Note that the packing result might differ from the released dataset. For reproduction, please use the packed result from the dataset. 
 
 ---
 
