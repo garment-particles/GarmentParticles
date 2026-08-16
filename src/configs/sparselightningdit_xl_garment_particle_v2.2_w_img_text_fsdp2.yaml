@@ -1,9 +1,7 @@
-# we recommend to read config_details.yaml first.
-
 defaults:
   - sparselightningdit_xl_garment_particle_fsdp2
   - override dataset: garment_particles_v2.2_w_img_text
-  - override model: sparse_lightningdit_v3_xl1_w_img_text
+  - override model: sparse_lightningdit_v3_xl1_w_img_text_v2
   - _self_
 
 data:

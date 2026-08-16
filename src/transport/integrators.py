@@ -90,13 +90,9 @@ class ode:
         atol,
         rtol,
         timestep_shift,
-        curve_sampling=False,
-        stitch_sampling=False,
     ):
         self.drift = drift
         self.t = th.linspace(t0, t1, num_steps)
-        self.curve_sampling = curve_sampling
-        self.stitch_sampling = stitch_sampling
 
         if timestep_shift > 0:
             def compute_tm(t_n, timestep_shift):

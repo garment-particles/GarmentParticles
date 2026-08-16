@@ -1,6 +1,0 @@
-defaults:
-  - sparse_lightningdit_v3_xl1
-  - _self_
-
-_target_: models.sparse_lightningdit_v3_cross_attn.SparseLightningDiTV3CrossAttn
-text_encoder_name: openai/clip-vit-large-patch14

@@ -409,7 +409,7 @@ def do_train(cfg: DictConfig):
     
     
     
-    transport = hydra.utils.instantiate(cfg.transport, normalization=cfg.dataset.normalization)
+    transport = hydra.utils.instantiate(cfg.transport)
 
     
     
@@ -672,8 +672,6 @@ def sample_during_training(model, transport, dataset, valid_loader, cfg, device,
         rtol=cfg.sample.rtol,
         reverse=cfg.sample.reverse,
         timestep_shift=cfg.sample.timestep_shift,
-        curve_sampling=cfg.sample.get("curve_sampling", False),
-        stitch_sampling=cfg.sample.get("stitch_sampling", False),
     )
 
     # Get a batch of validation data (all ranks get same data via valid_loader)

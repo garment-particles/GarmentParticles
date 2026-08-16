@@ -1,4 +1,6 @@
 timm
+numpy<2
+shapely
 diffusers
 accelerate
 torchdiffeq

@@ -1,9 +1,8 @@
 defaults:
-  - sparse_lightningdit_v3_xl1
+  - gpt_text
   - _self_
 
 _target_: models.sparse_lightningdit_v3_cross_attn_varlen_img_text_v2.SparseLightningDiTV3CrossAttnVarlenImgTextV2
 
 image_encoder_name: facebook/dinov2-large
-text_encoder_name: openai/clip-vit-large-patch14
 freeze_everything: True

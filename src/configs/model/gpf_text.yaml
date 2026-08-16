@@ -1,4 +1,5 @@
-_target_: models.sparse_lightningdit_v3.SparseLightningDiTV3
+_target_: models.sparse_lightningdit_v3_cross_attn.SparseLightningDiTV3CrossAttn
+text_encoder_name: openai/clip-vit-large-patch14
 depth: 28
 hidden_size: 1152
 num_heads: 16

@@ -1,4 +1,12 @@
-# GarmentParticles
+# Garment Particles: A 2D–3D Symmetric Garment Representation for Generation and Editing
+
+Official codebase for the SIGGRAPH Conference Papers 2026 paper _Garment Particles: A 2D–3D Symmetric Garment Representation for Generation and Editing_.
+
+[Project page](https://garment-particles.github.io)
+
+![Teaser](assets/teaser.png)
+
+---
 
 Diffusion-based garment generation. A **two-stage pipeline** generates a garment
 as a 3D particle cloud (stage 1 — the *particle generative function*, PGF) and
@@ -25,8 +33,8 @@ pip install flash-attn --no-build-isolation    # optional; may need to build fro
 export PYTHONPATH=$PWD/src:$PYTHONPATH
 ```
 
-The interactive GUI / inference server additionally needs the Earth Mover's
-Distance CUDA extension, built against your torch/CUDA:
+The Earth Mover's Distance CUDA extension must be built against your
+torch/CUDA:
 
 ```bash
 cd external/PyTorchEMD
@@ -45,13 +53,44 @@ src/
 ├── models/                       PGF + edge model architectures
 ├── datasets/                     particle & edge datasets
 ├── configs/                      Hydra configs
-├── transport/  patterns/  utils/
-└── tools/run_server.py           Flask inference server for the GUI
-external/
-├── paint/                        PyQt interactive editor (HTTP client)
-├── PyTorchEMD/                   EMD CUDA extension
-└── GarmentCode*/  NvidiaWarp-GarmentCode/   data-generation pipeline
+├── patterns/pattern_packing.py   standalone semantic 2D panel packing
+├── utils/stage1_particles.py     atomic stage-one HDF5 writer
+└── transport/                    diffusion transport and integrators
 ```
+
+---
+
+## Standalone pattern packing
+
+The semantic panel packer is first-party code and does not import or require
+GarmentCode. It accepts NumPy panel geometry and any tree-like hierarchy whose
+nodes expose `name`, `parent`, and `children`:
+
+```python
+import numpy as np
+
+from patterns.pattern_packing import (
+    PackingPanel,
+    load_panel_hierarchy,
+    pack_pattern_panels,
+)
+
+vertices = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
+boundary_indices = [0, 1, 2, 3]
+panels = [PackingPanel("left_ftorso", vertices, boundary_indices)]
+result = pack_pattern_panels(
+    panels,
+    load_panel_hierarchy(),
+    strategy="fine_to_coarse",
+    padding=3.0,
+)
+```
+
+`result.panel_vertices`, `result.boundaries`, and `result.offsets` contain the
+packed output. The only direct runtime dependencies of the packer are NumPy
+and Shapely. The related `utils.stage1_particles.write_stage1_particles`
+helper writes packed 2D coordinates plus simulated 3D coordinates to the HDF5
+schema consumed by the stage-one datasets.
 
 ---
 
@@ -108,117 +147,6 @@ Set `data_dir` in `src/configs/dataset/garment_particles_v2.2.yaml` (and
 included here — image-/sketch-conditioned inference and edge-model training need
 it. Download it from the official source and set `gcd_dir` / `text_path` (and,
 for edge training, `garment_edge_dir`) in the dataset configs accordingly.
-
-### Prepare stage-one particle data from simulated GCDv2 garments
-
-The downloadable particle shards above are already ready for training. Use
-this preparation step only when regenerating them from GarmentCodeData-v2 (or
-from garments produced by the GarmentCode simulation pipeline).
-
-The input is a text file containing one absolute garment-directory path per
-line. Each directory must have a specification, its box mesh, and the draped
-simulation mesh, with the directory basename used as the file prefix:
-
-```text
-/absolute/path/to/garmentcodedatav2/.../rand_ABC123/
-├── rand_ABC123_specification.json
-├── rand_ABC123_boxmesh.ply
-└── rand_ABC123_sim.ply
-```
-
-From the repository root, activate the repository environment. The external
-preparation pipeline uses geometry packages that are not part of
-`src/requirements.txt`, so install the local GarmentCode package and its
-Triangle dependency once:
-
-```bash
-conda activate interact_garment
-python -m pip install -e external/GarmentCode
-python -m pip install triangle
-
-# Optional dependency check before a long run
-python -c "import CGAL, h5py, igl, shapely, triangle, trimesh"
-```
-
-If the garment simulations already exist, build the pattern list from the
-repository root. Use paths that are valid on the machine that will perform the
-preprocessing:
-
-```bash
-export GCD_ROOT=/absolute/path/to/garmentcodedatav2
-export PATTERN_LIST=/absolute/path/to/all_pattern_list.txt
-
-find "$GCD_ROOT" -type f -name '*_specification.json' -printf '%h\n' \
-  | sort -u > "$PATTERN_LIST"
-```
-
-It is worth running a small visual smoke test before processing the full
-dataset:
-
-```bash
-export PARTICLE_ROOT=/absolute/path/to/garment_particles
-sed -n '1,3p' "$PATTERN_LIST" > /tmp/garmentparticles_pattern_smoke.txt
-
-python external/GarmentCode/process_garment_particles_normal_bnd.py \
-  --pattern_list /tmp/garmentparticles_pattern_smoke.txt \
-  --output_dir "${PARTICLE_ROOT}_smoke" \
-  --packing_strategy fine_to_coarse \
-  --packing_padding 3 \
-  --packing_max_iterations 500 \
-  --vis
-```
-
-Inspect each generated `panel_vis.png`. It shows the packed front and back
-boundary particles in red and interior particles in blue. Then run the full
-preparation, normally under a batch scheduler for a large dataset:
-
-```bash
-python external/GarmentCode/process_garment_particles_normal_bnd.py \
-  --pattern_list "$PATTERN_LIST" \
-  --output_dir "$PARTICLE_ROOT" \
-  --packing_strategy fine_to_coarse \
-  --packing_padding 3 \
-  --packing_max_iterations 500 \
-  --resume
-```
-
-`fine_to_coarse` is the recommended strategy. It packs front and back panels
-independently, preserves semantic garment hierarchy, and rejects a garment if
-overlaps remain after the requested iteration limit. The default clearance is
-3 cm. Other available strategies are `hierarchical`, `individual`, and
-`joint_optimization`.
-
-Each successful garment produces:
-
-```text
-garment_particles/rand_ABC123/
-├── garment_particles_rand_ABC123.h5   # train-ready completion marker
-├── garment_particles_rand_ABC123.npz  # legacy representation
-├── panel_offsets_rand_ABC123.json
-├── packing_metadata_rand_ABC123.json
-├── stats.txt
-└── panel_vis.png                       # only when --vis is supplied
-```
-
-The HDF5 schema is
-`front|back/<panel_name>/boundary_verts|interior_verts`. Every particle row is
-`[packed_u, packed_v, simulated_x, simulated_y, simulated_z]`; packing settings
-and panel offsets are also stored as HDF5 attributes. The HDF5 file is written
-atomically and published last, so `--resume` skips only completed samples.
-Failures are recorded in the timestamped processing log and
-`failed_folders_<timestamp>.txt`; the command exits nonzero when any garment
-fails.
-
-Finally, set `data_dir` in
-[`src/configs/dataset/garment_particles_v2.2.yaml`](src/configs/dataset/garment_particles_v2.2.yaml)
-to `PARTICLE_ROOT`. The loader discovers
-`PARTICLE_ROOT/*/garment_particles_*.h5`. For image-conditioned training, also
-set `gcd_dir`, `gcd_list_file`, and `text_path`; garment basenames in the GCD
-list must match the particle directories. For sketch-conditioned training, set
-`image_dir` to the line-art renders and configure `text_path`.
-
-For GarmentCode sampling and simulation instructions, see
-[`external/GarmentCode/docs/Running_data_generation.md`](external/GarmentCode/docs/Running_data_generation.md).
 
 ---
 
@@ -356,31 +284,3 @@ torchrun --nproc_per_node=8 train_fsdp2.py \
 # non-varlen baseline: same overrides, swap the config name to
 #   --config-name sparselightningdit_l_edges_v2.2_fsdp2
 ```
-
----
-
-## Interactive GUI
-
-The `external/paint/` PyQt editor performs inverse design (draw a guide → get a
-garment) by talking to a Flask inference server over HTTP.
-
-**Server** (on a GPU machine):
-
-```bash
-cd src
-python tools/run_server.py --host 0.0.0.0 --port 12345
-```
-
-**Client** (the GUI, on any machine with a display):
-
-```bash
-conda install -c conda-forge pyqt vtk pillow numpy
-pip install requests
-
-export INTERACT_GARMENT_HOST=<server-host>   # default 127.0.0.1
-export INTERACT_GARMENT_PORT=12345
-cd external/paint
-python main.py
-```
-
-`File → Inference` posts the drawn guide to the server and renders the result.
