@@ -8,8 +8,10 @@ from pygarment.meshgen.simulation import run_sim
 import pygarment.data_config as data_config
 from pygarment.meshgen.sim_config import PathCofig
 import glob
-from anytree import LevelOrderIter
-from pygarment.meshgen.render.texture_utils import unwarp_UV
+from pygarment.meshgen.pattern_packing import (
+    INDIVIDUAL,
+    pack_pattern_panels,
+)
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import h5py
@@ -55,15 +57,30 @@ def get_garment_texture(pattern_folder, out_path):
 
     garment_box_mesh = BoxMesh(pattern_spec, 1.0)
     garment_box_mesh.load()
-    front_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[0]))]
-    back_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[1]))]
+    front_islands = [
+        island
+        for island in garment_box_mesh.vertex_texture
+        if garment_box_mesh.is_front(island["panel_name"])
+    ]
+    back_islands = [
+        island
+        for island in garment_box_mesh.vertex_texture
+        if garment_box_mesh.is_back(island["panel_name"])
+    ]
     uv_dict = {}
     has_overlap = False
-    for _, islands in [('front', front_islands), ('back', back_islands)]:
-        uv_list, _, has_overlap = unwarp_UV(islands, garment_box_mesh.panel_tree, padding=1)  
-        for uv, island in zip(uv_list, islands):
+    for islands in (front_islands, back_islands):
+        panel_names = [island['panel_name'] for island in islands]
+        packing_result = pack_pattern_panels(
+            garment_box_mesh.get_packing_panels(panel_names),
+            garment_box_mesh.panel_tree,
+            padding=1,
+            strategy=INDIVIDUAL,
+        )
+        has_overlap = has_overlap or packing_result.has_overlap
+        for island in islands:
             panel_name = island['panel_name']
-            uv_dict[panel_name] = np.array(uv)
+            uv_dict[panel_name] = packing_result.panel_vertices[panel_name]
     for vertex_texture in garment_box_mesh.vertex_texture:
         panel_name = vertex_texture['panel_name']
         vertex_texture['uv'] = uv_dict[panel_name]

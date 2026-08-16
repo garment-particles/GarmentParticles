@@ -109,6 +109,117 @@ included here — image-/sketch-conditioned inference and edge-model training ne
 it. Download it from the official source and set `gcd_dir` / `text_path` (and,
 for edge training, `garment_edge_dir`) in the dataset configs accordingly.
 
+### Prepare stage-one particle data from simulated GCDv2 garments
+
+The downloadable particle shards above are already ready for training. Use
+this preparation step only when regenerating them from GarmentCodeData-v2 (or
+from garments produced by the GarmentCode simulation pipeline).
+
+The input is a text file containing one absolute garment-directory path per
+line. Each directory must have a specification, its box mesh, and the draped
+simulation mesh, with the directory basename used as the file prefix:
+
+```text
+/absolute/path/to/garmentcodedatav2/.../rand_ABC123/
+├── rand_ABC123_specification.json
+├── rand_ABC123_boxmesh.ply
+└── rand_ABC123_sim.ply
+```
+
+From the repository root, activate the repository environment. The external
+preparation pipeline uses geometry packages that are not part of
+`src/requirements.txt`, so install the local GarmentCode package and its
+Triangle dependency once:
+
+```bash
+conda activate interact_garment
+python -m pip install -e external/GarmentCode
+python -m pip install triangle
+
+# Optional dependency check before a long run
+python -c "import CGAL, h5py, igl, shapely, triangle, trimesh"
+```
+
+If the garment simulations already exist, build the pattern list from the
+repository root. Use paths that are valid on the machine that will perform the
+preprocessing:
+
+```bash
+export GCD_ROOT=/absolute/path/to/garmentcodedatav2
+export PATTERN_LIST=/absolute/path/to/all_pattern_list.txt
+
+find "$GCD_ROOT" -type f -name '*_specification.json' -printf '%h\n' \
+  | sort -u > "$PATTERN_LIST"
+```
+
+It is worth running a small visual smoke test before processing the full
+dataset:
+
+```bash
+export PARTICLE_ROOT=/absolute/path/to/garment_particles
+sed -n '1,3p' "$PATTERN_LIST" > /tmp/garmentparticles_pattern_smoke.txt
+
+python external/GarmentCode/process_garment_particles_normal_bnd.py \
+  --pattern_list /tmp/garmentparticles_pattern_smoke.txt \
+  --output_dir "${PARTICLE_ROOT}_smoke" \
+  --packing_strategy fine_to_coarse \
+  --packing_padding 3 \
+  --packing_max_iterations 500 \
+  --vis
+```
+
+Inspect each generated `panel_vis.png`. It shows the packed front and back
+boundary particles in red and interior particles in blue. Then run the full
+preparation, normally under a batch scheduler for a large dataset:
+
+```bash
+python external/GarmentCode/process_garment_particles_normal_bnd.py \
+  --pattern_list "$PATTERN_LIST" \
+  --output_dir "$PARTICLE_ROOT" \
+  --packing_strategy fine_to_coarse \
+  --packing_padding 3 \
+  --packing_max_iterations 500 \
+  --resume
+```
+
+`fine_to_coarse` is the recommended strategy. It packs front and back panels
+independently, preserves semantic garment hierarchy, and rejects a garment if
+overlaps remain after the requested iteration limit. The default clearance is
+3 cm. Other available strategies are `hierarchical`, `individual`, and
+`joint_optimization`.
+
+Each successful garment produces:
+
+```text
+garment_particles/rand_ABC123/
+├── garment_particles_rand_ABC123.h5   # train-ready completion marker
+├── garment_particles_rand_ABC123.npz  # legacy representation
+├── panel_offsets_rand_ABC123.json
+├── packing_metadata_rand_ABC123.json
+├── stats.txt
+└── panel_vis.png                       # only when --vis is supplied
+```
+
+The HDF5 schema is
+`front|back/<panel_name>/boundary_verts|interior_verts`. Every particle row is
+`[packed_u, packed_v, simulated_x, simulated_y, simulated_z]`; packing settings
+and panel offsets are also stored as HDF5 attributes. The HDF5 file is written
+atomically and published last, so `--resume` skips only completed samples.
+Failures are recorded in the timestamped processing log and
+`failed_folders_<timestamp>.txt`; the command exits nonzero when any garment
+fails.
+
+Finally, set `data_dir` in
+[`src/configs/dataset/garment_particles_v2.2.yaml`](src/configs/dataset/garment_particles_v2.2.yaml)
+to `PARTICLE_ROOT`. The loader discovers
+`PARTICLE_ROOT/*/garment_particles_*.h5`. For image-conditioned training, also
+set `gcd_dir`, `gcd_list_file`, and `text_path`; garment basenames in the GCD
+list must match the particle directories. For sketch-conditioned training, set
+`image_dir` to the line-art renders and configure `text_path`.
+
+For GarmentCode sampling and simulation instructions, see
+[`external/GarmentCode/docs/Running_data_generation.md`](external/GarmentCode/docs/Running_data_generation.md).
+
 ---
 
 ## Inference

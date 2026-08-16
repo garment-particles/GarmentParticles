@@ -120,6 +120,41 @@ On the high level, every config contains the following
 
 > Simulation parameters differ significantly for Warp-based and Qualoth-based piplines, and they cannot be used interchengeably.
 
+## GarmentParticles stage-one preparation
+
+After simulation has produced each garment's specification, box mesh, and
+simulated mesh, use `process_garment_particles_normal_bnd.py` to build the
+particle files consumed by the first-stage GarmentParticles dataset loader.
+The command performs semantic pattern packing before extracting boundary and
+interior particles:
+
+```bash
+python process_garment_particles_normal_bnd.py \
+    --pattern_list /path/to/all_pattern_list.txt \
+    --output_dir /path/to/garment_particles \
+    --packing_strategy fine_to_coarse \
+    --packing_padding 3 \
+    --resume
+```
+
+Front and back panels are packed independently. The default
+`fine_to_coarse` strategy preserves garment hierarchy while resolving panel
+overlaps with 3 cm clearance. A garment is rejected if physical overlaps
+remain after `--packing_max_iterations` (500 by default). Available strategies
+are `fine_to_coarse`, `hierarchical`, `individual`, and `joint_optimization`.
+
+For every successful garment, the output directory contains:
+
+* `garment_particles_<id>.h5`: train-ready
+  `front|back/panel_name/boundary_verts|interior_verts` data;
+* `panel_offsets_<id>.json`: the per-panel packing translations;
+* `packing_metadata_<id>.json`: strategy, clearance, iteration count, and
+  convergence information;
+* `garment_particles_<id>.npz`: the legacy side-aggregated representation;
+* `stats.txt`: particle-count and coordinate bounds.
+
+The HDF5 file also records packing configuration and offsets as attributes so
+the layout recipe remains attached to the training sample.
 
 
 

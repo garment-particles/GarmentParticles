@@ -5,16 +5,19 @@ import matplotlib.pyplot as plt
 import matplotlib
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
-from tqdm import tqdm
-from anytree import AnyNode, LevelOrderIter, LevelOrderGroupIter
-from shapely.geometry import Polygon
-from shapely.affinity import translate
-from shapely.ops import unary_union
+
+from pygarment.meshgen.pattern_packing import (
+    HIERARCHICAL,
+    INDIVIDUAL,
+    PackingPanel,
+    pack_pattern_panels,
+    panel_in_branch,
+)
 
 # SECTION UV islands texture creation 
 def texture_mesh_islands(
     vertex_texture: List[Dict],
-    panel_tree: AnyNode,
+    panel_tree,
     out_texture_image_path: Path, 
     out_fabric_tex_image_path: Optional[Path] = None, 
     out_mtl_file_path: Optional[Path] = None, 
@@ -29,8 +32,20 @@ def texture_mesh_islands(
         Returns updated uv coordinates (properly normalized and aligned with the created texture)
         and material information for front/back panels
     """
-    front_islands = [island for island in vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(panel_tree.children[0]))]
-    back_islands = [island for island in vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(panel_tree.children[1]))]
+    front_islands = [
+        island
+        for island in vertex_texture
+        if panel_in_branch(
+            panel_tree, island["panel_name"], "front"
+        )
+    ]
+    back_islands = [
+        island
+        for island in vertex_texture
+        if panel_in_branch(
+            panel_tree, island["panel_name"], "back"
+        )
+    ]
     uv_dict = {}
     
     materials = {}
@@ -39,7 +54,16 @@ def texture_mesh_islands(
         if not islands:
             continue
 
-        group_uvs, boundary_uv_to_draw = unwarp_UV(islands, panel_tree, padding=uv_padding)       
+        group_uvs, boundary_uv_to_draw, has_overlap, _ = pack_uv_islands(
+            islands,
+            panel_tree,
+            padding=uv_padding,
+            strategy=INDIVIDUAL,
+        )
+        if has_overlap:
+            print(
+                f"Pattern packing did not converge for {group_name} panels"
+            )
         max_uv = max(max_uv, np.array(group_uvs).max())
         min_uv = min(min_uv, np.array(group_uvs).min())
         
@@ -102,292 +126,86 @@ def _uv_connected_components(face_texture_coords):
 
     return vert_components, face_components, num_ccs
 
+
 def _bbox(uv: np.ndarray) -> Tuple[float, float, float, float]:
     """Return width, height, min_u, min_v for an island."""
     mn = uv.min(axis=0)
     mx = uv.max(axis=0)
     return (mx[0] - mn[0], mx[1] - mn[1], *mn)
 
+
+def pack_uv_islands(
+    panels,
+    panel_tree,
+    padding=1,
+    strategy=INDIVIDUAL,
+    max_iterations=500,
+):
+    """Adapt UV-island dictionaries to the pattern-packing API.
+
+    Boundary extraction is the only mesh-specific operation here. Semantic
+    placement and collision resolution live in ``pattern_packing``.
+    """
+
+    packing_panels = []
+    for panel in panels:
+        packing_panels.append(
+            PackingPanel(
+                name=panel["panel_name"],
+                vertices=panel["uv"],
+                boundary_indices=igl.boundary_loop(
+                    panel["face_texture_coords"]
+                ),
+                translation=panel["translation"],
+                rotation=panel["rotation"],
+                rotation_center=panel["rotation_center"],
+            )
+        )
+
+    result = pack_pattern_panels(
+        packing_panels,
+        panel_tree,
+        padding=padding,
+        strategy=strategy,
+        max_iterations=max_iterations,
+    )
+    packed_uvs = [
+        result.panel_vertices[panel["panel_name"]].tolist()
+        for panel in panels
+    ]
+    boundaries = [
+        result.boundaries[panel["panel_name"]] for panel in panels
+    ]
+    return packed_uvs, boundaries, result.has_overlap, result.offsets
+
+
 def unwarp_UV(panels, panel_tree, padding=1):
-    # Unwrap uvs for each connected component------------------------
-    # 1. Initial placement based on 3D panel centers
-    polygons = []
-    for i in range(len(panels)):
-        uvs = np.array(panels[i]["uv"])
-        # uvs = np.array(panels[i]["uv"]) + panels[i]["translation"]
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        flat_rot_angle = panels[i]['rotation']
-        rotation_center = panels[i]['rotation_center']
-        rotation_matrix = np.array([[np.cos(flat_rot_angle), -np.sin(flat_rot_angle)], [np.sin(flat_rot_angle), np.cos(flat_rot_angle)]])
-        rotated_boundary_uvs = (rotation_matrix @ (boundary_uvs - rotation_center)[..., None])[..., 0] + rotation_center
-        panels[i]["uv"] = (rotation_matrix @ (uvs - rotation_center)[..., None])[..., 0] + rotation_center + panels[i]["translation"]
-        polygons.append(Polygon(rotated_boundary_uvs + panels[i]["translation"]))
-        # print(boundary_uvs)
-        # print(np.all(boundary_uvs == np.array(polygons[-1].boundary.coords)[:-1]))
+    """Compatibility wrapper for the former per-panel UV packing routine."""
 
-    # 2. Hierarchically resolve overlaps using polygons
-    bufferred_polygons = [polygon.buffer(padding/2) for polygon in polygons]
-    name_to_idx = {island['panel_name']: i for i, island in enumerate(panels)}
+    packed = pack_uv_islands(
+        panels,
+        panel_tree,
+        padding=padding,
+        strategy=INDIVIDUAL,
+    )
+    for panel, packed_uvs in zip(panels, packed[0]):
+        panel["uv"] = np.asarray(packed_uvs)
+    return packed
 
-    def move_node_and_descendants(node_to_move, move_x, move_y, name_to_idx, polygons):
-        nodes_to_move = [node_to_move] + list(node_to_move.descendants)
-        for node in nodes_to_move:
-            if node.name in name_to_idx:
-                idx = name_to_idx[node.name]
-                polygons[idx] = translate(polygons[idx], xoff=move_x, yoff=move_y)
-
-    iterations = 500
-    for _ in tqdm(range(iterations)):
-        had_overlap = False
-        # Resolve sibling overlaps
-        for level_nodes in LevelOrderGroupIter(panel_tree):
-            for i in range(len(level_nodes)):
-                for j in range(i + 1, len(level_nodes)):
-                    node_i = level_nodes[i]
-                    node_j = level_nodes[j]
-
-                    if node_i.name not in name_to_idx or node_j.name not in name_to_idx:
-                        continue
-
-                    idx_i = name_to_idx[node_i.name]
-                    idx_j = name_to_idx[node_j.name]
-
-                    poly_i = bufferred_polygons[idx_i]
-                    poly_j = bufferred_polygons[idx_j]
-
-                    if poly_i.intersects(poly_j):
-                        had_overlap = True
-                        # Compute centroids
-                        centroid_i = np.array([poly_i.centroid.x, poly_i.centroid.y])
-                        centroid_j = np.array([poly_j.centroid.x, poly_j.centroid.y])
-                        direction = centroid_j - centroid_i
-                        direction_norm = np.linalg.norm(direction)
-                        if direction_norm == 0:
-                            direction = np.array([1.0, 0.0])
-                        direction = direction / direction_norm
-                        # Move each polygon away from each other by padding/2
-                        move_vec = direction * (padding) / 2
-                        move_node_and_descendants(node_i, -move_vec[0]/2, -move_vec[1]/2, name_to_idx, bufferred_polygons)
-                        move_node_and_descendants(node_i, -move_vec[0]/2, -move_vec[1]/2, name_to_idx, polygons)
-                        move_node_and_descendants(node_j, move_vec[0]/2, move_vec[1]/2, name_to_idx, bufferred_polygons)
-                        move_node_and_descendants(node_j, move_vec[0]/2, move_vec[1]/2, name_to_idx, polygons)
-        # Resolve parent-child overlaps
-        for node in LevelOrderIter(panel_tree):
-            if node.is_root or node.parent is None:
-                continue
-            parent = node.parent
-            if node.name not in name_to_idx or parent.name not in name_to_idx:
-                continue
-            idx_child = name_to_idx[node.name]
-            idx_parent = name_to_idx[parent.name]
-            poly_child = bufferred_polygons[idx_child]
-            poly_parent = bufferred_polygons[idx_parent]
-            if poly_child.intersects(poly_parent):
-                had_overlap = True
-                centroid_child = np.array([poly_child.centroid.x, poly_child.centroid.y])
-                centroid_parent = np.array([poly_parent.centroid.x, poly_parent.centroid.y])
-                direction = centroid_child - centroid_parent
-                direction_norm = np.linalg.norm(direction)
-                if direction_norm == 0:
-                    direction = np.array([1.0, 0.0])
-                else:
-                    direction = direction / direction_norm
-                move_vec = direction * padding
-                move_node_and_descendants(node, move_vec[0], move_vec[1], name_to_idx, polygons)
-                move_node_and_descendants(node, move_vec[0], move_vec[1], name_to_idx, bufferred_polygons)
-                
-        if not had_overlap:
-            break
-    
-    if had_overlap:
-        print(f'Had overlap after {iterations} iterations')
-
-    # 3) translate local UVs into packed space
-    # First find global min u,v coordinates
-    # Shift all UVs to be non-negative and apply packing offsets
-    offsets = {}
-    for i in range(len(panels)):
-        # Get the translation vector from the original polygon to the moved polygon
-        uvs = np.array(panels[i]["uv"])
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        orig_poly = Polygon(boundary_uvs)
-        moved_poly = polygons[i]
-        # Calculate translation offset
-        offset = np.array([moved_poly.centroid.x, moved_poly.centroid.y]) - np.array([orig_poly.centroid.x, orig_poly.centroid.y])
-        offsets[panels[i]["panel_name"]] = offset
-    
-    all_uvs = []
-    boundary_uv_to_draw = []
-    for i in range(len(panels)):
-        uvs = np.array(panels[i]["uv"]) + offsets[panels[i]["panel_name"]]
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        boundary_uv_to_draw.append(boundary_uvs)
-        all_uvs.append(uvs.tolist())
-
-    return all_uvs, boundary_uv_to_draw, had_overlap, offsets
 
 def unwarp_UV_hierarchical(panels, panel_tree, padding=1):
-    """
-    Similar to unwarp_UV but performs intersection checks on the union of all children
-    for each node, not just the individual island.
-    """
-    
-    # Initial setup - same as unwarp_UV
-    polygons = []
-    for i in range(len(panels)):
-        uvs = np.array(panels[i]["uv"])
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        flat_rot_angle = panels[i]['rotation']
-        rotation_center = panels[i]['rotation_center']
-        rotation_matrix = np.array([[np.cos(flat_rot_angle), -np.sin(flat_rot_angle)], [np.sin(flat_rot_angle), np.cos(flat_rot_angle)]])
-        rotated_boundary_uvs = (rotation_matrix @ (boundary_uvs - rotation_center)[..., None])[..., 0] + rotation_center
-        panels[i]["uv"] = (rotation_matrix @ (uvs - rotation_center)[..., None])[..., 0] + rotation_center + panels[i]["translation"]
-        polygons.append(Polygon(rotated_boundary_uvs + panels[i]["translation"]))
+    """Compatibility wrapper for the former hierarchical UV packer."""
 
-    bufferred_polygons = [polygon.buffer(padding/2) for polygon in polygons]
-    name_to_idx = {island['panel_name']: i for i, island in enumerate(panels)}
+    packed = pack_uv_islands(
+        panels,
+        panel_tree,
+        padding=padding,
+        strategy=HIERARCHICAL,
+    )
+    for panel, packed_uvs in zip(panels, packed[0]):
+        panel["uv"] = np.asarray(packed_uvs)
+    return packed
 
-    def get_node_union_polygon(node, name_to_idx, polygons):
-        """Get the union of polygons for a node and all its descendants"""
-        node_polygons = []
-        
-        # Add current node's polygon if it exists
-        if node.name in name_to_idx:
-            idx = name_to_idx[node.name]
-            node_polygons.append(polygons[idx])
-        
-        # Add all descendant polygons
-        for descendant in node.descendants:
-            if descendant.name in name_to_idx:
-                idx = name_to_idx[descendant.name]
-                node_polygons.append(polygons[idx])
-        
-        if node_polygons:
-            return unary_union(node_polygons)
-        return None
-
-    def move_node_and_descendants(node_to_move, move_x, move_y, name_to_idx, polygons):
-        nodes_to_move = [node_to_move] + list(node_to_move.descendants)
-        for node in nodes_to_move:
-            if node.name in name_to_idx:
-                idx = name_to_idx[node.name]
-                polygons[idx] = translate(polygons[idx], xoff=move_x, yoff=move_y)
-
-    iterations = 500
-    for _ in tqdm(range(iterations)):
-        had_overlap = False
-        
-        # Resolve sibling overlaps using hierarchical union polygons
-        for node in LevelOrderIter(panel_tree):
-            if node.is_leaf:
-                continue 
-            level_nodes = list(node.children)
-            for i in range(len(level_nodes)):
-                for j in range(i + 1, len(level_nodes)):
-                    node_i = level_nodes[i]
-                    node_j = level_nodes[j]
-
-                    
-                    # Get union polygons for each node and its descendants
-                    union_i = get_node_union_polygon(node_i, name_to_idx, bufferred_polygons)
-                    union_j = get_node_union_polygon(node_j, name_to_idx, bufferred_polygons)
-
-                    if union_i is None or union_j is None:
-                        continue
-
-                    if union_i.intersects(union_j):
-                        had_overlap = True
-                        # Compute centroids of union polygons
-                        centroid_i = np.array([union_i.centroid.x, union_i.centroid.y])
-                        centroid_j = np.array([union_j.centroid.x, union_j.centroid.y])
-                        direction = centroid_j - centroid_i
-                        if node.name in ["front", "back"]:
-                            # the second level only move vertically. 
-                            direction = direction - direction[0] * np.array([1, 0])
-                        if node.name in ["top"]:
-                            # the second level only move horizontally. 
-                            direction = direction - direction[1] * np.array([0, 1])
-                        if "pant" in node_i.name or "pant" in node_j.name:
-                            # the second level only move horizontally. 
-                            direction = direction - direction[1] * np.array([0, 1])
-                            
-                        direction_norm = np.linalg.norm(direction)
-                        if direction_norm == 0:
-                            direction = np.array([1.0, 0.0])
-                        direction = direction / direction_norm
-                        
-                        # Move each hierarchy away from each other by padding/2
-                        move_vec = direction * (padding) / 2
-                        move_node_and_descendants(node_i, -move_vec[0]/2, -move_vec[1]/2, name_to_idx, bufferred_polygons)
-                        move_node_and_descendants(node_i, -move_vec[0]/2, -move_vec[1]/2, name_to_idx, polygons)
-                        move_node_and_descendants(node_j, move_vec[0]/2, move_vec[1]/2, name_to_idx, bufferred_polygons)
-                        move_node_and_descendants(node_j, move_vec[0]/2, move_vec[1]/2, name_to_idx, polygons)
-        
-        # Resolve parent-child overlaps using hierarchical union polygons
-        # import ipdb; ipdb.set_trace()
-        for node in LevelOrderIter(panel_tree):
-            if node.is_root or node.parent is None:
-                continue
-            parent = node.parent
-            
-            if node.name not in name_to_idx or parent.name not in name_to_idx:
-                continue
-            # Get union polygons
-            idx_child = name_to_idx[node.name]
-            idx_parent = name_to_idx[parent.name]
-            poly_child = get_node_union_polygon(node, name_to_idx, bufferred_polygons)
-            poly_parent = bufferred_polygons[idx_parent]
-            
-            if poly_child is None or poly_parent is None:
-                continue
-                
-            if poly_child.intersects(poly_parent):
-                had_overlap = True
-                centroid_child = np.array([poly_child.centroid.x, poly_child.centroid.y])
-                centroid_parent = np.array([poly_parent.centroid.x, poly_parent.centroid.y])
-                direction = centroid_child - centroid_parent
-                if "torso" in parent.name and "sleeve" in node.name:
-                    direction = direction - direction[1] * np.array([0, 1])
-                direction_norm = np.linalg.norm(direction)
-                if direction_norm == 0:
-                    direction = np.array([1.0, 0.0])
-                else:
-                    direction = direction / direction_norm
-                move_vec = direction * padding
-                move_node_and_descendants(node, move_vec[0], move_vec[1], name_to_idx, polygons)
-                move_node_and_descendants(node, move_vec[0], move_vec[1], name_to_idx, bufferred_polygons)
-                
-        if not had_overlap:
-            break
-    
-    if had_overlap:
-        print(f'Had overlap after {iterations} iterations')
-
-    # Calculate final offsets and apply to UVs - same as unwarp_UV
-    offsets = {}
-    for i in range(len(panels)):
-        uvs = np.array(panels[i]["uv"])
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        orig_poly = Polygon(boundary_uvs)
-        moved_poly = polygons[i]
-        offset = np.array([moved_poly.centroid.x, moved_poly.centroid.y]) - np.array([orig_poly.centroid.x, orig_poly.centroid.y])
-        offsets[panels[i]["panel_name"]] = offset
-    
-    all_uvs = []
-    boundary_uv_to_draw = []
-    for i in range(len(panels)):
-        uvs = np.array(panels[i]["uv"]) + offsets[panels[i]["panel_name"]]
-        boundary_ids = igl.boundary_loop(panels[i]["face_texture_coords"])
-        boundary_uvs = uvs[boundary_ids]
-        boundary_uv_to_draw.append(boundary_uvs)
-        all_uvs.append(uvs.tolist())
-
-    return all_uvs, boundary_uv_to_draw, had_overlap, offsets
 
 def normalize_UVs(all_uvs, axis_padding=3):
     # normalize all_uvs

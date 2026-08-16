@@ -12,8 +12,10 @@ import torch.optim as optim
 from collections import defaultdict
 from pygarment.vd_utils.constrained_delaunay_triangulation import constrained_delaunay_triangulation
 from pygarment.vd_utils.bichromatic_separator import bichromatic_voronoi_separator, voronoi_cells
-from pygarment.meshgen.render.texture_utils import unwarp_UV, unwarp_UV_hierarchical
-from anytree import LevelOrderIter
+from pygarment.meshgen.pattern_packing import (
+    HIERARCHICAL,
+    pack_pattern_panels,
+)
 import json
 import logging
 import traceback
@@ -157,20 +159,35 @@ def process_garment_single(pattern_folder, out_folder):
         logging.error(f"BoxMesh loading error for {garment_name}: {e}")
         return False
             
-    front_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[0]))]
-    back_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[1]))]
+    front_islands = [
+        island
+        for island in garment_box_mesh.vertex_texture
+        if garment_box_mesh.is_front(island["panel_name"])
+    ]
+    back_islands = [
+        island
+        for island in garment_box_mesh.vertex_texture
+        if garment_box_mesh.is_back(island["panel_name"])
+    ]
     
     uv_dict = {}
     has_overlap = False
     eps = 0.5
     panel_offsets = {}
     
-    for side, islands in [('front', front_islands), ('back', back_islands)]:
-        uv_list, _, has_overlap, offsets = unwarp_UV_hierarchical(islands, garment_box_mesh.panel_tree, padding=5)  
-        panel_offsets.update(offsets)
-        for uv, island in zip(uv_list, islands):
+    for islands in (front_islands, back_islands):
+        panel_names = [island['panel_name'] for island in islands]
+        packing_result = pack_pattern_panels(
+            garment_box_mesh.get_packing_panels(panel_names),
+            garment_box_mesh.panel_tree,
+            padding=5,
+            strategy=HIERARCHICAL,
+        )
+        panel_offsets.update(packing_result.offsets)
+        has_overlap = has_overlap or packing_result.has_overlap
+        for island in islands:
             panel_name = island['panel_name']
-            uv_dict[panel_name] = np.array(uv)
+            uv_dict[panel_name] = packing_result.panel_vertices[panel_name]
                 
     for vertex_texture in garment_box_mesh.vertex_texture:
         panel_name = vertex_texture['panel_name']

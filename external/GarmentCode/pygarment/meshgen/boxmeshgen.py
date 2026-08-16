@@ -14,10 +14,6 @@ import pickle
 from pathlib import Path   
 import yaml
 from typing import List, Dict, Tuple
-from anytree import Node, RenderTree
-import json
-from anytree.importer import DictImporter
-from anytree import LevelOrderIter
 from scipy.spatial.transform import Rotation as R
 
 #Personal Modules
@@ -26,6 +22,12 @@ import pygarment.pattern.wrappers as wrappers
 from pygarment.pattern import rotation as rotation_tools
 import pygarment.pattern.utils as pat_utils
 import pygarment.meshgen.triangulation_utils as tri_utils
+from pygarment.meshgen.pattern_packing import (
+    PackingPanel,
+    load_panel_hierarchy,
+    panel_in_branch,
+    update_panel_hierarchy,
+)
 from pygarment.meshgen.sim_config import PathCofig
 from pygarment.meshgen.render.texture_utils import texture_mesh_islands, save_obj_with_materials
 
@@ -763,16 +765,12 @@ class BoxMesh(wrappers.VisPattern):
         self.vertex_normals = []
         self.faces_with_texture = []
         self.vertex_texture = []
+        self.packing_panels = {}
         self.vertices_with_name = []
         self.faces_with_name = []
         self.vertex_labels = {}   # Additional vertex labels coming from panel edges' labels
         
-        panel_tree_path = "assets/panel_tree.json"
-        with open(panel_tree_path, 'r') as f:
-            panel_tree_data = json.load(f)
-        
-        importer = DictImporter()
-        self.panel_tree = importer.import_(panel_tree_data)
+        self.panel_tree = load_panel_hierarchy()
         
     # SECTION -- Top level 
     def load(self):
@@ -788,77 +786,13 @@ class BoxMesh(wrappers.VisPattern):
         # NOTE: Collapse stitch vertices and store to self.vertices as well as their stitch_id to self.stitch_segmentation
         self.collapse_stitch_vertices()
 
-        # update skirt panels based on the number of skirt panels in the pattern
-        skirt_panels = [panel for panel in self.panelNames if "skirt_panel" in panel]
-        skirt_panels = sorted(skirt_panels, key=lambda x: int(x.split("_")[-1]))
-        for i, skirt_panel in enumerate(skirt_panels):
-            z_val = self.panels[skirt_panel].translation[-1]
-            if z_val >= 0:
-                # add to front
-                self.panel_tree.children[0].children = list(self.panel_tree.children[0].children) + [Node(skirt_panel, parent=self.panel_tree.children[0])]
-            else:
-                # add to back
-                self.panel_tree.children[1].children = list(self.panel_tree.children[1].children) + [Node(skirt_panel, parent=self.panel_tree.children[1])]
-        
-        contains_both_pant_cuffs = ("pant_l_cuff_skirt_f" in self.panelNames) and ("pant_l_cuff_f" in  self.panelNames) or \
-            ("pant_l_cuff_skirt_b" in  self.panelNames) and ("pant_l_cuff_b" in  self.panelNames) or \
-            ("pant_r_cuff_skirt_b" in  self.panelNames) and ("pant_r_cuff_b" in  self.panelNames) or \
-            ("pant_r_cuff_skirt_f" in  self.panelNames) and ("pant_r_cuff_f" in  self.panelNames)
-        if contains_both_pant_cuffs:
-            if "pant_f_r" in self.panelNames:
-                # front
-                pant_f_r = self.panel_tree.children[0].children[3]
-                pant_r_cuff_f = Node("pant_r_cuff_f", parent=pant_f_r)
-                pant_r_cuff_skirt_f = Node("pant_r_cuff_skirt_f", parent=pant_r_cuff_f)
-                pant_f_r.children = [pant_r_cuff_f]
-            if "pant_b_r" in self.panelNames:
-                # back
-                pant_b_r = self.panel_tree.children[1].children[4]
-                pant_r_cuff_b = Node("pant_r_cuff_b", parent=pant_b_r)
-                pant_r_cuff_skirt_b = Node("pant_r_cuff_skirt_b", parent=pant_r_cuff_b)
-                pant_b_r.children = [pant_r_cuff_b]
-            if "pant_f_l" in self.panelNames:
-                # front
-                pant_f_l = self.panel_tree.children[0].children[4]
-                pant_l_cuff_f = Node("pant_l_cuff_f", parent=pant_f_l)
-                pant_l_cuff_skirt_f = Node("pant_l_cuff_skirt_f", parent=pant_l_cuff_f)
-                pant_f_l.children = [pant_l_cuff_f]
-            if "pant_b_l" in self.panelNames:
-                # back
-                pant_b_l = self.panel_tree.children[1].children[3]
-                pant_l_cuff_b = Node("pant_l_cuff_b", parent=pant_b_l)
-                pant_l_cuff_skirt_b = Node("pant_l_cuff_skirt_b", parent=pant_l_cuff_b)
-                pant_b_l.children = [pant_l_cuff_b]
-                
-        contains_both_sl_cuffs = ("sl_left_cuff_skirt_f" in  self.panelNames) and ("sl_left_cuff_f" in  self.panelNames) or \
-            ("sl_left_cuff_skirt_b" in  self.panelNames) and ("sl_left_cuff_b" in  self.panelNames) or \
-            ("sl_right_cuff_skirt_b" in  self.panelNames) and ("sl_right_cuff_b" in  self.panelNames) or \
-            ("sl_right_cuff_skirt_f" in  self.panelNames) and ("sl_right_cuff_f" in  self.panelNames)
-        if contains_both_sl_cuffs:
-            if "left_sleeve_f" in self.panelNames:
-                # front
-                left_sleeve_f = self.panel_tree.children[0].children[0].children[0]
-                sl_left_cuff_f = Node("sl_left_cuff_f", parent=left_sleeve_f)
-                sl_left_cuff_skirt_f = Node("sl_left_cuff_skirt_f", parent=sl_left_cuff_f)
-                left_sleeve_f.children = [sl_left_cuff_f]
-            if "left_sleeve_b" in self.panelNames:
-                # back
-                left_sleeve_b = self.panel_tree.children[1].children[0].children[0]
-                sl_left_cuff_b = Node("sl_left_cuff_b", parent=left_sleeve_b)
-                sl_left_cuff_skirt_b = Node("sl_left_cuff_skirt_b", parent=sl_left_cuff_b)
-                left_sleeve_b.children = [sl_left_cuff_b]
-            if "right_sleeve_f" in self.panelNames:
-                # front
-                right_sleeve_f = self.panel_tree.children[0].children[1].children[0]
-                sl_right_cuff_f = Node("sl_right_cuff_f", parent=right_sleeve_f)
-                sl_right_cuff_skirt_f = Node("sl_right_cuff_skirt_f", parent=sl_right_cuff_f)
-                right_sleeve_f.children = [sl_right_cuff_f]
-            if "right_sleeve_b" in self.panelNames:
-                # back
-                right_sleeve_b = self.panel_tree.children[1].children[1].children[0]
-                sl_right_cuff_b = Node("sl_right_cuff_b", parent=right_sleeve_b)
-                sl_right_cuff_skirt_b = Node("sl_right_cuff_skirt_b", parent=sl_right_cuff_b)
-                right_sleeve_b.children = [sl_right_cuff_b]
+        update_panel_hierarchy(
+            self.panel_tree,
+            {
+                panel_name: self.panels[panel_name].translation
+                for panel_name in self.panelNames
+            },
+        )
         
         self.finalise_mesh()
         self.loaded = True
@@ -1668,7 +1602,17 @@ class BoxMesh(wrappers.VisPattern):
         return v_texture.tolist()
     
     def is_front(self, panel_name):
-        return any(node.name == panel_name for node in LevelOrderIter(self.panel_tree.children[0]))
+        return panel_in_branch(self.panel_tree, panel_name, "front")
+
+    def is_back(self, panel_name):
+        return panel_in_branch(self.panel_tree, panel_name, "back")
+
+    def get_packing_panels(self, panel_names=None):
+        """Return UV-independent panel geometry for semantic packing."""
+
+        if panel_names is None:
+            panel_names = self.panelNames
+        return [self.packing_panels[name] for name in panel_names]
     
         
 
@@ -1707,7 +1651,7 @@ class BoxMesh(wrappers.VisPattern):
             #Order face vertices so that face norms are equal to the panel.panel_norm
             self._order_face_vertices(panel, v_3D)
 
-            textured_faces = []
+            panel_faces_2d = []
             for face in panel.panel_faces:
                 loc_stitch_ids = [loc_id for loc_id in face if loc_id < n_stitches_panel]
 
@@ -1725,27 +1669,40 @@ class BoxMesh(wrappers.VisPattern):
                 #Add texture
                 tex_id0, tex_id1, tex_id2 = face
                 id0, id1, id2 = f_glob_ids
-                textured_faces.append([tex_id0, tex_id1, tex_id2])
+                panel_faces_2d.append([tex_id0, tex_id1, tex_id2])
                 textured_face = [id0, tex_id0 + texture_offset, id1, tex_id1 + texture_offset, id2, tex_id2 + texture_offset]
                 self.faces_with_texture.append(textured_face)
                 self.faces_with_name.append(panel.panel_name)
                 
 
-            vertex_texture = {}
-            uv = np.array(panel.panel_vertices)
-            texture_offset += len(uv)
+            panel_vertices_2d = np.array(panel.panel_vertices)
+            texture_offset += len(panel_vertices_2d)
             rotation = R.from_euler('XYZ', panel.rotation, degrees=True)   # XYZ
             # Estimate degree of rotation of Y axis
             # NOTE: Ox sometimes gets flipped because of 
             # Gimbal locks of this Euler angle representation
             res = rotation.apply([0, 1, 0])
             flat_rot_angle = vector_angle([0, 1], res[:2])
-            # uv = np.array([[np.cos(flat_rot_angle), -np.sin(flat_rot_angle)], [np.sin(flat_rot_angle), np.cos(flat_rot_angle)]]) @ np.array(uv)[..., None]
-            vertex_texture["uv"] = uv
-            vertex_texture["face_texture_coords"] = np.array(textured_faces)
-            vertex_texture["translation"] = panel.translation[:2]
-            vertex_texture["rotation"] = flat_rot_angle
-            vertex_texture["rotation_center"] = self.pattern['panels'][panel.panel_name]['vertices'][0]
+            rotation_center = self.pattern['panels'][panel.panel_name]['vertices'][0]
+            packing_panel = PackingPanel(
+                name=panel.panel_name,
+                vertices=panel_vertices_2d,
+                boundary_indices=igl.boundary_loop(
+                    np.asarray(panel_faces_2d, dtype=int)
+                ),
+                translation=panel.translation[:2],
+                rotation=flat_rot_angle,
+                rotation_center=rotation_center,
+            )
+            self.packing_panels[panel.panel_name] = packing_panel
+
+            # Keep texture metadata as a separate adapter representation.
+            vertex_texture = {}
+            vertex_texture["uv"] = packing_panel.vertices.copy()
+            vertex_texture["face_texture_coords"] = np.array(panel_faces_2d)
+            vertex_texture["translation"] = packing_panel.translation.copy()
+            vertex_texture["rotation"] = packing_panel.rotation
+            vertex_texture["rotation_center"] = packing_panel.rotation_center.copy()
             vertex_texture['panel_name'] = panel.panel_name
             self.vertex_texture.append(vertex_texture)
 

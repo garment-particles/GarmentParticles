@@ -12,14 +12,30 @@ import torch.optim as optim
 from collections import defaultdict
 from pygarment.vd_utils.constrained_delaunay_triangulation import constrained_delaunay_triangulation
 from pygarment.vd_utils.bichromatic_separator import bichromatic_voronoi_separator, voronoi_cells
-from pygarment.meshgen.render.texture_utils import unwarp_UV, unwarp_UV_hierarchical
-from anytree import LevelOrderIter
+from pygarment.meshgen.pattern_packing import (
+    FINE_TO_COARSE,
+    HIERARCHICAL,
+    INDIVIDUAL,
+    JOINT_OPTIMIZATION,
+    pack_pattern_panels,
+)
 import json
 import logging
 import traceback
 import sys
 import os
 import igl
+
+
+DEFAULT_PACKING_STRATEGY = FINE_TO_COARSE
+DEFAULT_PACKING_PADDING = 3.0
+DEFAULT_PACKING_MAX_ITERATIONS = 500
+PACKING_STRATEGIES = (
+    FINE_TO_COARSE,
+    HIERARCHICAL,
+    INDIVIDUAL,
+    JOINT_OPTIMIZATION,
+)
 
 def get_line_from_dir(line_dir, p):
     return lambda t: p + t * line_dir
@@ -136,7 +152,13 @@ def categorize_failure(error_message, garment_name):
     else:
         return 'other_errors'
 
-def process_garment_single(pattern_folder, out_folder):
+def process_garment_single(
+    pattern_folder,
+    out_folder,
+    packing_strategy=DEFAULT_PACKING_STRATEGY,
+    packing_padding=DEFAULT_PACKING_PADDING,
+    packing_max_iterations=DEFAULT_PACKING_MAX_ITERATIONS,
+):
     try:
         garment_name = pattern_folder.split('/')[-1]
         
@@ -165,20 +187,45 @@ def process_garment_single(pattern_folder, out_folder):
             logging.error(f"BoxMesh loading error for {garment_name}: {e}")
             return False
                 
-        front_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[0]))]
-        back_islands = [island for island in garment_box_mesh.vertex_texture if any(node.name == island['panel_name'] for node in LevelOrderIter(garment_box_mesh.panel_tree.children[1]))]
+        front_islands = [
+            island
+            for island in garment_box_mesh.vertex_texture
+            if garment_box_mesh.is_front(island["panel_name"])
+        ]
+        back_islands = [
+            island
+            for island in garment_box_mesh.vertex_texture
+            if garment_box_mesh.is_back(island["panel_name"])
+        ]
         
         uv_dict = {}
         has_overlap = False
         eps = 0.5
         panel_offsets = {}
         
-        for side, islands in [('front', front_islands), ('back', back_islands)]:
-            uv_list, _, has_overlap, offsets = unwarp_UV_hierarchical(islands, garment_box_mesh.panel_tree, padding=3)  
-            panel_offsets.update(offsets)
-            for uv, island in zip(uv_list, islands):
+        packing_sides = {}
+        for side, islands in (
+            ("front", front_islands),
+            ("back", back_islands),
+        ):
+            panel_names = [island['panel_name'] for island in islands]
+            packing_result = pack_pattern_panels(
+                garment_box_mesh.get_packing_panels(panel_names),
+                garment_box_mesh.panel_tree,
+                padding=packing_padding,
+                strategy=packing_strategy,
+                max_iterations=packing_max_iterations,
+            )
+            panel_offsets.update(packing_result.offsets)
+            has_overlap = has_overlap or packing_result.has_overlap
+            packing_sides[side] = {
+                "panel_names": panel_names,
+                "iterations": packing_result.iterations,
+                "has_overlap": packing_result.has_overlap,
+            }
+            for island in islands:
                 panel_name = island['panel_name']
-                uv_dict[panel_name] = np.array(uv)
+                uv_dict[panel_name] = packing_result.panel_vertices[panel_name]
                     
         for vertex_texture in garment_box_mesh.vertex_texture:
             panel_name = vertex_texture['panel_name']
@@ -192,6 +239,18 @@ def process_garment_single(pattern_folder, out_folder):
         
         with open(out_folder / f'panel_offsets_{garment_name}.json', 'w') as f:
             json.dump(panel_offsets, f, indent=2)
+
+        packing_metadata = {
+            "strategy": packing_strategy,
+            "padding_cm": float(packing_padding),
+            "max_iterations": int(packing_max_iterations),
+            "sides": packing_sides,
+        }
+        with open(
+            out_folder / f'packing_metadata_{garment_name}.json',
+            'w',
+        ) as f:
+            json.dump(packing_metadata, f, indent=2)
 
         final_inside_pts = []
         final_outside_pts = []
@@ -214,15 +273,11 @@ def process_garment_single(pattern_folder, out_folder):
                 panel_name = island['panel_name']
                 panel = garment_box_mesh.panels[panel_name]
                 fine_panel = garment_box_mesh_fine.panels[panel_name]
-                fine_island = [island for island in garment_box_mesh_fine.vertex_texture if island['panel_name'] == panel_name][0]
                 is_front = side == 'front'
                 
-                fine_verts = fine_panel.panel_vertices
-                fine_verts = np.array(fine_verts)
-                flat_rot_angle = fine_island['rotation']
-                rotation_center = fine_island['rotation_center']
-                rotation_matrix = np.array([[np.cos(flat_rot_angle), -np.sin(flat_rot_angle)], [np.sin(flat_rot_angle), np.cos(flat_rot_angle)]])
-                fine_verts = (rotation_matrix @ (fine_verts - rotation_center)[..., None])[..., 0] + rotation_center + fine_island["translation"]
+                fine_verts = garment_box_mesh_fine.packing_panels[
+                    panel_name
+                ].placed_vertices()
                 fine_verts += panel_offsets[panel_name]
                 fine_faces = fine_panel.panel_faces
                 fine_faces = np.array(fine_faces)
@@ -435,6 +490,24 @@ if __name__ == "__main__":
     parser.add_argument("--pattern_list", type=str, default="/orion/u/w4756677/garment/InteractGarment/external/GarmentCode/assets/pattern_lists/all_pattern_list.txt")
     parser.add_argument("--output_dir", type=str, default="/orion/u/w4756677/garment/gcdv2/garment_particles_filtered")
     parser.add_argument("--resume", action="store_true", help="Skip already processed garments")
+    parser.add_argument(
+        "--packing_strategy",
+        choices=PACKING_STRATEGIES,
+        default=DEFAULT_PACKING_STRATEGY,
+        help="Semantic panel-packing strategy used before particle extraction",
+    )
+    parser.add_argument(
+        "--packing_padding",
+        type=float,
+        default=DEFAULT_PACKING_PADDING,
+        help="Required panel clearance in centimeters",
+    )
+    parser.add_argument(
+        "--packing_max_iterations",
+        type=int,
+        default=DEFAULT_PACKING_MAX_ITERATIONS,
+        help="Maximum overlap-resolution iterations per packing stage",
+    )
     args = parser.parse_args()
     
     with open(args.pattern_list, 'r') as f:
@@ -442,6 +515,12 @@ if __name__ == "__main__":
         
     logging.info(f"Processing {len(pattern_folders)} garments")
     logging.info(f"Output directory: {args.output_dir}")
+    logging.info(
+        "Pattern packing: strategy=%s, padding=%s cm, max_iterations=%s",
+        args.packing_strategy,
+        args.packing_padding,
+        args.packing_max_iterations,
+    )
     logging.info(f"CUDA available: {torch.cuda.is_available()}")
     
     failed_folders = []
@@ -478,7 +557,13 @@ if __name__ == "__main__":
             
         try:
             logging.info(f"Processing ({i+1}/{len(pattern_folders)}): {garment_name}")
-            success = process_garment_single(pattern_folder, args.output_dir)
+            success = process_garment_single(
+                pattern_folder,
+                args.output_dir,
+                packing_strategy=args.packing_strategy,
+                packing_padding=args.packing_padding,
+                packing_max_iterations=args.packing_max_iterations,
+            )
             if success:
                 processed_count += 1
             else:
