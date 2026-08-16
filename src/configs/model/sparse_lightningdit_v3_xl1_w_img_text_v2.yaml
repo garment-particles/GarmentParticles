@@ -1,5 +1,5 @@
 defaults:
-  - gpt_text
+  - gpf_text
   - _self_
 
 _target_: models.sparse_lightningdit_v3_cross_attn_varlen_img_text_v2.SparseLightningDiTV3CrossAttnVarlenImgTextV2
