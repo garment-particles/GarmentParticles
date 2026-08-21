@@ -10,6 +10,8 @@ hydra-core
 trimesh
 wandb
 pillow
+requests
+pyarrow
 einops
 fairscale
 safetensors
